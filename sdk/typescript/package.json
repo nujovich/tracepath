@@ -1,0 +1,17 @@
+{
+  "name": "@tracepath/sdk",
+  "version": "0.1.0",
+  "description": "Tracepath TypeScript SDK — auditable AI agent middleware client",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["tracepath", "audit", "ai-agent", "compliance"],
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "typescript": "^5.5"
+  }
+}

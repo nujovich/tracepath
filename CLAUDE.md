@@ -51,11 +51,11 @@ tracepath/
 - [ ] README con quickstart
 
 ### Fase 1 — MVP (semanas 3–6)
-- [ ] OPA WASM embebido en Gateway
-- [ ] Reglas base: presupuesto, tool allowlist, rate limit
-- [ ] API REST de consulta de auditoría
-- [ ] WORM storage con S3/MinIO Object Lock
-- [ ] SDKs TypeScript + Java
+- [x] OPA WASM embebido en Gateway
+- [x] Reglas base: presupuesto, tool allowlist, rate limit
+- [x] API REST de consulta de auditoría
+- [x] WORM storage con S3/MinIO Object Lock
+- [x] SDKs TypeScript + Java
 
 ### Fase 2 — Incident Response (semanas 7–10)
 - [ ] NATS JetStream streaming
