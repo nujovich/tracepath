@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["OTelSdkError"],"trait":["ExportError"],"type":["OTelSdkResult"]};

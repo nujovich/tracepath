@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gateway
+    ports:
+      - "9001:9001"
+    environment:
+      - AUDIT_SIGNING_KEY=${AUDIT_SIGNING_KEY}
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=9001
+      - RUST_LOG=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=tracepath
+      - POSTGRES_PASSWORD=tracepath
+      - POSTGRES_DB=tracepath
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracepath"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:

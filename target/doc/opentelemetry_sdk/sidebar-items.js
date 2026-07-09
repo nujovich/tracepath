@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["error","logs","metrics","propagation","resource","trace"],"struct":["Resource"]};

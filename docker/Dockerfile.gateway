@@ -1,0 +1,12 @@
+FROM rust:1.89-alpine AS builder
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY gateway/ ./gateway/
+RUN cargo build --release --bin tracepath-gateway
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /app/target/release/tracepath-gateway /usr/local/bin/tracepath-gateway
+EXPOSE 9001
+CMD ["tracepath-gateway"]

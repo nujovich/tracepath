@@ -1,0 +1,9 @@
+[project]
+name = "tracepath-sdk"
+version = "0.1.0"
+description = "Tracepath Python SDK — auditable AI agent middleware client"
+requires-python = ">=3.10"
+dependencies = ["httpx>=0.27", "pydantic>=2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
