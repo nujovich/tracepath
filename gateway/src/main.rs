@@ -2,15 +2,21 @@ use actix_web::{web, App, HttpServer, HttpResponse};
 use ed25519_dalek::{SigningKey, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::info;
+use tokio::sync::Mutex;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use opa_wasm::{Policy, Runtime, DefaultContext};
+use opa_wasm::wasmtime::{Engine as WasmEngine, Module, Store};
+
+// ── Data models ──
 
 #[derive(Debug, Deserialize)]
 struct AuditStep {
     session_id: String,
     agent_id: String,
+    agent_type: Option<String>,
     step_number: u32,
     tool_name: String,
     tool_input: serde_json::Value,
@@ -22,17 +28,47 @@ struct AuditStep {
 struct AuditResponse {
     status: String,
     signature: String,
+    policy_decision: Option<PolicyDecision>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct PolicyDecision {
+    allowed: bool,
+    denials: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: String,
     service: String,
+    version: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct QueryParams {
+    session_id: Option<String>,
+    agent_id: Option<String>,
+    tool_name: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+// ── App state ──
+
+struct PolicyEngine {
+    engine: WasmEngine,
+    module: Module,
+    store: Mutex<Store<()>>,
+    policy: Policy<DefaultContext>,
 }
 
 struct AppState {
     signing_key: SigningKey,
+    policy_engine: PolicyEngine,
+    db_pool: sqlx::PgPool,
 }
+
+// ── Tracing ──
 
 fn init_tracing() {
     tracing_subscriber::fmt()
@@ -44,6 +80,8 @@ fn init_tracing() {
         .init();
 }
 
+// ── Ed25519 signing ──
+
 fn sign_event(key: &SigningKey, event: &AuditStep) -> String {
     let canonical = serde_json::json!({
         "session_id": event.session_id,
@@ -54,11 +92,77 @@ fn sign_event(key: &SigningKey, event: &AuditStep) -> String {
         "tool_output": event.tool_output,
         "timestamp": event.timestamp,
     });
-
     let canonical_bytes = serde_json::to_vec(&canonical).expect("serialization failed");
     let signature = key.sign(&canonical_bytes);
     BASE64.encode(signature.to_bytes())
 }
+
+// ── OPA Policy Engine ──
+
+async fn load_policy() -> PolicyEngine {
+    let bundle_path = std::env::var("POLICY_BUNDLE_PATH")
+        .unwrap_or_else(|_| "policies/bundle.tar.gz".to_string());
+
+    let wasm_bytes = opa_wasm::read_bundle(&bundle_path)
+        .await
+        .expect(&format!("failed to read policy bundle at {}", bundle_path));
+
+    info!(path = %bundle_path, "policy bundle loaded");
+
+    let engine = WasmEngine::default();
+    let module = Module::new(&engine, wasm_bytes)
+        .expect("failed to compile OPA WASM module");
+
+    let mut store = Store::new(&engine, ());
+
+    let runtime = Runtime::new(&mut store, &module)
+        .await
+        .expect("failed to create OPA runtime");
+
+    let policy = runtime.without_data(&mut store)
+        .await
+        .expect("failed to instantiate policy");
+
+    info!("OPA WASM runtime initialized");
+
+    PolicyEngine {
+        engine,
+        module,
+        store: Mutex::new(store),
+        policy,
+    }
+}
+
+async fn evaluate_policy(engine: &PolicyEngine, input: &serde_json::Value) -> PolicyDecision {
+    let mut store = engine.store.lock().await;
+
+    let result: Result<serde_json::Value, _> = engine.policy.evaluate(
+        &mut *store,
+        "tracepath/main",
+        input,
+    ).await;
+
+    match result {
+        Ok(val) => {
+            let allowed = val[0]["result"]["allowed"].as_bool().unwrap_or(false);
+            let denials: Vec<String> = val[0]["result"]["denials"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            PolicyDecision { allowed, denials }
+        }
+        Err(e) => {
+            warn!(error = %e, "OPA evaluation failed");
+            PolicyDecision {
+                allowed: false,
+                denials: vec![format!("policy engine error: {}", e)],
+            }
+        }
+    }
+}
+
+// ── Handlers ──
 
 async fn audit_step(
     state: web::Data<Arc<AppState>>,
@@ -74,35 +178,195 @@ async fn audit_step(
         "audit step received"
     );
 
+    // Build OPA input
+    let policy_input = serde_json::json!({
+        "action": "audit_step",
+        "agent_type": event.agent_type.as_deref().unwrap_or("default"),
+        "tool_name": event.tool_name,
+        "estimated_cost_cents": 0,
+        "spent_so_far_cents": 0,
+        "calls_last_minute": 0,
+    });
+
+    let decision = evaluate_policy(&state.policy_engine, &policy_input).await;
     let sig_b64 = sign_event(&state.signing_key, &event);
+
+    if !decision.allowed {
+        let denial_msgs = decision.denials.clone();
+        warn!(
+            session_id = %event.session_id,
+            tool_name = %event.tool_name,
+            ?denial_msgs,
+            "policy denied audit step"
+        );
+
+        return HttpResponse::Forbidden().json(AuditResponse {
+            status: "denied".to_string(),
+            signature: sig_b64,
+            policy_decision: Some(decision),
+        });
+    }
+
+    // Persist to PostgreSQL
+    let result = sqlx::query(
+        "INSERT INTO audit_events (session_id, agent_id, agent_type, step_number, tool_name, tool_input, tool_output, signature, policy_decision)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+    )
+    .bind(&event.session_id)
+    .bind(&event.agent_id)
+    .bind(&event.agent_type)
+    .bind(event.step_number as i32)
+    .bind(&event.tool_name)
+    .bind(&event.tool_input)
+    .bind(&event.tool_output)
+    .bind(&sig_b64)
+    .bind(&serde_json::to_string(&decision).unwrap_or_default())
+    .execute(&state.db_pool)
+    .await;
+
+    if let Err(e) = result {
+        warn!(error = %e, "failed to persist audit event");
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": format!("persistence failed: {}", e),
+            "signature": sig_b64,
+        }));
+    }
 
     HttpResponse::Ok().json(AuditResponse {
         status: "recorded".to_string(),
         signature: sig_b64,
+        policy_decision: Some(decision),
     })
+}
+
+async fn query_events(
+    state: web::Data<Arc<AppState>>,
+    query: web::Query<QueryParams>,
+) -> HttpResponse {
+    let limit = query.limit.unwrap_or(50).min(500);
+    let offset = query.offset.unwrap_or(0);
+
+    let mut sql = String::from(
+        "SELECT id, session_id, agent_id, agent_type, step_number, tool_name, signature, policy_decision, created_at
+         FROM audit_events WHERE 1=1"
+    );
+
+    let mut n = 1;
+
+    if query.session_id.is_some() {
+        sql.push_str(&format!(" AND session_id = ${}", n));
+        n += 1;
+    }
+    if query.agent_id.is_some() {
+        sql.push_str(&format!(" AND agent_id = ${}", n));
+        n += 1;
+    }
+    if query.tool_name.is_some() {
+        sql.push_str(&format!(" AND tool_name = ${}", n));
+        n += 1;
+    }
+
+    sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ${} OFFSET ${}", n, n + 1));
+
+    #[derive(sqlx::FromRow)]
+    struct AuditRow {
+        id: uuid::Uuid,
+        session_id: String,
+        agent_id: String,
+        agent_type: Option<String>,
+        step_number: i32,
+        tool_name: String,
+        signature: String,
+        policy_decision: Option<String>,
+        created_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    let mut q = sqlx::query_as::<_, AuditRow>(&sql);
+
+    if let Some(ref sid) = query.session_id {
+        q = q.bind(sid);
+    }
+    if let Some(ref aid) = query.agent_id {
+        q = q.bind(aid);
+    }
+    if let Some(ref tn) = query.tool_name {
+        q = q.bind(tn);
+    }
+    q = q.bind(limit);
+    q = q.bind(offset);
+
+    let rows = q.fetch_all(&state.db_pool).await;
+
+    match rows {
+        Ok(events) => {
+            let out: Vec<serde_json::Value> = events.iter().map(|r| {
+                serde_json::json!({
+                    "id": r.id.to_string(),
+                    "session_id": r.session_id,
+                    "agent_id": r.agent_id,
+                    "agent_type": r.agent_type,
+                    "step_number": r.step_number,
+                    "tool_name": r.tool_name,
+                    "signature": r.signature,
+                    "policy_decision": r.policy_decision,
+                    "created_at": r.created_at.to_rfc3339(),
+                })
+            }).collect();
+
+            HttpResponse::Ok().json(serde_json::json!({
+                "events": out,
+                "count": out.len(),
+                "limit": limit,
+                "offset": offset,
+            }))
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("query failed: {}", e),
+            }))
+        }
+    }
 }
 
 async fn health() -> HttpResponse {
     HttpResponse::Ok().json(HealthResponse {
         status: "ok".to_string(),
         service: "tracepath-gateway".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
+
+async fn policy_health(state: web::Data<Arc<AppState>>) -> HttpResponse {
+    let test_input = serde_json::json!({
+        "action": "health_check",
+        "agent_type": "default",
+        "tool_name": "read_file",
+        "estimated_cost_cents": 0,
+        "spent_so_far_cents": 0,
+        "calls_last_minute": 0,
+    });
+    let decision = evaluate_policy(&state.policy_engine, &test_input).await;
+    HttpResponse::Ok().json(serde_json::json!({
+        "policy_engine": "ok",
+        "smoke_test": decision,
+    }))
+}
+
+// ── Main ──
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
     init_tracing();
 
+    // Signing key
     let signing_key_hex = std::env::var("AUDIT_SIGNING_KEY")
         .expect("AUDIT_SIGNING_KEY must be set (64 hex chars, 32-byte Ed25519 seed)");
-
     let key_bytes = hex::decode(&signing_key_hex)
         .expect("AUDIT_SIGNING_KEY must be valid hex");
-
     let key_array: [u8; 32] = key_bytes.try_into()
         .expect("AUDIT_SIGNING_KEY must be exactly 32 bytes");
-
     let signing_key = SigningKey::from_bytes(&key_array);
     let verifying_key: VerifyingKey = signing_key.verifying_key();
 
@@ -111,7 +375,31 @@ async fn main() -> std::io::Result<()> {
         "gateway signing key loaded"
     );
 
-    let state = Arc::new(AppState { signing_key });
+    // OPA policy engine (async load)
+    let policy_engine = load_policy().await;
+
+    // PostgreSQL connection
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set");
+    let db_pool = sqlx::PgPool::connect(&database_url)
+        .await
+        .expect("failed to connect to PostgreSQL");
+
+    info!("PostgreSQL connected");
+
+    // Run migrations
+    sqlx::query(include_str!("../../docker/init.sql"))
+        .execute(&db_pool)
+        .await
+        .expect("failed to run schema migration");
+
+    info!("schema migration applied");
+
+    let state = Arc::new(AppState {
+        signing_key,
+        policy_engine,
+        db_pool,
+    });
 
     let host = std::env::var("GATEWAY_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("GATEWAY_PORT")
@@ -125,7 +413,9 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(state.clone()))
             .route("/health", web::get().to(health))
+            .route("/health/policy", web::get().to(policy_health))
             .route("/audit/step", web::post().to(audit_step))
+            .route("/audit/events", web::get().to(query_events))
     })
     .bind(format!("{}:{}", host, port))?
     .run()
