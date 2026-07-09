@@ -12,9 +12,20 @@ services:
       - GATEWAY_HOST=0.0.0.0
       - GATEWAY_PORT=9001
       - RUST_LOG=info
+      - DATABASE_URL=postgres://tracepath:tracepath@postgres:5432/tracepath
+      - POLICY_BUNDLE_PATH=/app/policies/bundle.tar.gz
+      - S3_ENDPOINT=http://minio:9000
+      - S3_BUCKET=tracepath-worm
+      - S3_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+    volumes:
+      - ../policies/bundle.tar.gz:/app/policies/bundle.tar.gz:ro
     depends_on:
       postgres:
         condition: service_healthy
+      minio-create-bucket:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   postgres:
@@ -35,5 +46,39 @@ services:
       retries: 5
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_API_ENABLE_OBJECT_LOCK=on
+    ports:
+      - "9000:9000"
+      - "9002:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  minio-create-bucket:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb --with-lock local/tracepath-worm || true;
+      mc retention set --default compliance 365d local/tracepath-worm || true;
+      echo 'Bucket tracepath-worm ready';
+      "
+    restart: "no"
+
 volumes:
   pgdata:
+  miniodata:

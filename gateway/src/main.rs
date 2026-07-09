@@ -9,10 +9,12 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use opa_wasm::{Policy, Runtime, DefaultContext};
 use opa_wasm::wasmtime::{Engine as WasmEngine, Module, Store};
+use aws_sdk_s3::Client as S3Client;
+use aws_config::BehaviorVersion;
 
 // ── Data models ──
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct AuditStep {
     session_id: String,
     agent_id: String,
@@ -66,6 +68,8 @@ struct AppState {
     signing_key: SigningKey,
     policy_engine: PolicyEngine,
     db_pool: sqlx::PgPool,
+    s3_client: S3Client,
+    worm_bucket: String,
 }
 
 // ── Tracing ──
@@ -162,6 +166,31 @@ async fn evaluate_policy(engine: &PolicyEngine, input: &serde_json::Value) -> Po
     }
 }
 
+// ── WORM archival (S3 with Object Lock) ──
+
+async fn worm_archive(
+    s3: &S3Client,
+    bucket: &str,
+    session_id: &str,
+    step_number: u32,
+    signature: &str,
+    event: &AuditStep,
+) -> Result<(), String> {
+    let key = format!("{}/{}_{}.json", session_id, step_number, &signature[..16.min(signature.len())]);
+    let body = serde_json::to_vec(event).map_err(|e| e.to_string())?;
+
+    s3.put_object()
+        .bucket(bucket)
+        .key(&key)
+        .body(body.into())
+        .send()
+        .await
+        .map_err(|e| format!("S3 put_object failed: {}", e))?;
+
+    info!(bucket = %bucket, key = %key, "archived to WORM storage");
+    Ok(())
+}
+
 // ── Handlers ──
 
 async fn audit_step(
@@ -231,6 +260,18 @@ async fn audit_step(
             "message": format!("persistence failed: {}", e),
             "signature": sig_b64,
         }));
+    }
+
+    // Archive to WORM storage (MinIO S3 with Object Lock)
+    if let Err(e) = worm_archive(
+        &state.s3_client,
+        &state.worm_bucket,
+        &event.session_id,
+        event.step_number,
+        &sig_b64,
+        &event,
+    ).await {
+        warn!(error = %e, "failed to archive to WORM storage (non-fatal)");
     }
 
     HttpResponse::Ok().json(AuditResponse {
@@ -395,10 +436,27 @@ async fn main() -> std::io::Result<()> {
 
     info!("schema migration applied");
 
+    // S3 client for WORM storage
+    let worm_bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "tracepath-worm".to_string());
+    let s3_endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".to_string());
+    let s3_region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+
+    let aws_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    let s3_config = aws_sdk_s3::config::Builder::from(&aws_config)
+        .endpoint_url(&s3_endpoint)
+        .force_path_style(true)
+        .region(aws_types::region::Region::new(s3_region.clone()))
+        .build();
+    let s3_client = S3Client::from_conf(s3_config);
+
+    info!(endpoint = %s3_endpoint, bucket = %worm_bucket, region = %s3_region, "S3 WORM client initialized");
+
     let state = Arc::new(AppState {
         signing_key,
         policy_engine,
         db_pool,
+        s3_client,
+        worm_bucket,
     });
 
     let host = std::env::var("GATEWAY_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());

@@ -18,3 +18,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 base64 = "0.22"
 opa-wasm = { version = "0.3", features = ["json-builtins", "loader"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono"] }
+aws-sdk-s3 = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-credential-types = "1"
+aws-types = "1"
