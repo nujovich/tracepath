@@ -1,0 +1,16 @@
+/home/hermes/tracepath/target/debug/deps/opentelemetry_otlp-04f81bef4dcad8e6.d: /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/lib.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/mod.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/mod.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/metrics.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/logs.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/trace.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/logs.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/metric.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/span.rs
+
+/home/hermes/tracepath/target/debug/deps/libopentelemetry_otlp-04f81bef4dcad8e6.rmeta: /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/lib.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/mod.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/mod.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/metrics.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/logs.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/trace.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/logs.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/metric.rs /home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/span.rs
+
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/lib.rs:
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/mod.rs:
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/mod.rs:
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/metrics.rs:
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/logs.rs:
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/exporter/http/trace.rs:
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/logs.rs:
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/metric.rs:
+/home/hermes/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opentelemetry-otlp-0.32.0/src/span.rs:
+
+# env-dep:CARGO_PKG_NAME=opentelemetry-otlp
+# env-dep:CARGO_PKG_VERSION=0.32.0
