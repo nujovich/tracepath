@@ -375,6 +375,9 @@ async fn audit_step(
         }));
     }
 
+    // Publish to NATS for real-time incident detection (all events, including denied)
+    publish_audit_event(&state.nats, &event, &sig_b64, &decision).await;
+
     if !decision.allowed {
         return HttpResponse::Forbidden().json(AuditResponse {
             status: "denied".to_string(),
@@ -383,7 +386,7 @@ async fn audit_step(
         });
     }
 
-    // Archive to WORM storage (MinIO S3 with Object Lock)
+    // Archive to WORM storage (MinIO S3 with Object Lock) — allowed events only
     if let Err(e) = worm_archive(
         &state.s3_client,
         &state.worm_bucket,
@@ -394,9 +397,6 @@ async fn audit_step(
     ).await {
         warn!(error = %e, "failed to archive to WORM storage (non-fatal)");
     }
-
-    // Publish to NATS for real-time incident detection
-    publish_audit_event(&state.nats, &event, &sig_b64, &decision).await;
 
     HttpResponse::Ok().json(AuditResponse {
         status: "recorded".to_string(),
