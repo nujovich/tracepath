@@ -347,15 +347,9 @@ async fn audit_step(
             ?denial_msgs,
             "policy denied audit step"
         );
-
-        return HttpResponse::Forbidden().json(AuditResponse {
-            status: "denied".to_string(),
-            signature: sig_b64,
-            policy_decision: Some(decision),
-        });
     }
 
-    // Persist to PostgreSQL
+    // Persist to PostgreSQL — always, even denied events are part of the audit trail
     let result = sqlx::query(
         "INSERT INTO audit_events (session_id, agent_id, agent_type, step_number, tool_name, tool_input, tool_output, signature, policy_decision)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
@@ -379,6 +373,14 @@ async fn audit_step(
             "message": format!("persistence failed: {}", e),
             "signature": sig_b64,
         }));
+    }
+
+    if !decision.allowed {
+        return HttpResponse::Forbidden().json(AuditResponse {
+            status: "denied".to_string(),
+            signature: sig_b64,
+            policy_decision: Some(decision),
+        });
     }
 
     // Archive to WORM storage (MinIO S3 with Object Lock)
