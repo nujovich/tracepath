@@ -3,6 +3,7 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/li
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY gateway/ ./gateway/
+COPY docker/init.sql ./docker/init.sql
 RUN cargo build --release --bin tracepath-gateway
 
 FROM debian:bookworm-slim
