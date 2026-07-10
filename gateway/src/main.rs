@@ -1,4 +1,5 @@
-use actix_web::{web, App, HttpServer, HttpResponse};
+use actix_web::{web, App, HttpServer, HttpResponse, HttpRequest};
+use awc::Client;
 use ed25519_dalek::{SigningKey, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -502,6 +503,28 @@ async fn health() -> HttpResponse {
     })
 }
 
+async fn proxy_incidents(req: HttpRequest) -> HttpResponse {
+    let client = Client::new();
+    let incident_url = format!(
+        "http://incident:9004/api/incidents{}",
+        req.query_string()
+            .map(|q| format!("?{}", q))
+            .unwrap_or_default()
+    );
+
+    match client.get(&incident_url).send().await {
+        Ok(mut res) => {
+            let body = res.body().await.unwrap_or_default();
+            HttpResponse::Ok()
+                .content_type("application/json")
+                .body(body)
+        }
+        Err(_) => HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "error": "incident service unavailable"
+        })),
+    }
+}
+
 async fn policy_health(state: web::Data<Arc<AppState>>) -> HttpResponse {
     let test_input = serde_json::json!({
         "action": "health_check",
@@ -611,6 +634,7 @@ async fn main() -> std::io::Result<()> {
             .route("/health/policy", web::get().to(policy_health))
             .route("/audit/step", web::post().to(audit_step))
             .route("/audit/events", web::get().to(query_events))
+            .route("/api/incidents", web::get().to(proxy_incidents))
     })
     .bind(format!("{}:{}", host, port))?
     .run()

@@ -39,6 +39,17 @@ interface DiffFile {
   hunks: DiffHunk[];
 }
 
+interface Incident {
+  id: string;
+  type: string;
+  severity: string;
+  session_id: string;
+  agent_id: string;
+  message: string;
+  context: Record<string, unknown>;
+  detected_at: string;
+}
+
 // ── Helpers ──
 
 function parseDecision(raw: string | null): PolicyDecision | null {
@@ -282,6 +293,130 @@ function AuditTab() {
   );
 }
 
+// ── Incidents Tab ──
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: "text-red-400 bg-red-950/50 border-red-800",
+  warning: "text-amber-400 bg-amber-950/50 border-amber-800",
+  info: "text-blue-400 bg-blue-950/50 border-blue-800",
+};
+
+function IncidentsTab() {
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchIncidents = async () => {
+    try {
+      const res = await fetch("/api/incidents?limit=100");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setIncidents(data.incidents || []);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fetch incidents");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchIncidents();
+    const interval = setInterval(fetchIncidents, 10_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const critical = incidents.filter((i) => i.severity === "critical").length;
+  const warnings = incidents.filter((i) => i.severity === "warning").length;
+
+  return (
+    <div className="space-y-6">
+      {!loading && !error && (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <StatCard label="Total Incidents" value={incidents.length} />
+          <StatCard label="Critical" value={critical} alert={critical > 0} />
+          <StatCard label="Warnings" value={warnings} />
+        </div>
+      )}
+
+      <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-400">
+            Incident Timeline
+          </h2>
+        </div>
+        {loading ? (
+          <div className="p-8 text-center text-gray-500">
+            Loading incidents...
+          </div>
+        ) : error ? (
+          <div className="p-8 text-center text-red-400">
+            Error: {error}
+            <button
+              onClick={fetchIncidents}
+              className="ml-2 underline hover:text-red-300"
+            >
+              Retry
+            </button>
+          </div>
+        ) : incidents.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            No incidents detected yet. Send some audit events to trigger detection.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase">
+                  <th className="px-4 py-2">Time</th>
+                  <th className="px-4 py-2">Severity</th>
+                  <th className="px-4 py-2">Type</th>
+                  <th className="px-4 py-2">Session</th>
+                  <th className="px-4 py-2">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {incidents
+                  .slice()
+                  .reverse()
+                  .map((inc) => (
+                    <tr
+                      key={inc.id}
+                      className="border-b border-gray-800/50 hover:bg-gray-800/30"
+                    >
+                      <td className="px-4 py-2 font-mono text-xs text-gray-500 whitespace-nowrap">
+                        {new Date(inc.detected_at).toLocaleTimeString()}
+                      </td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`text-xs px-2 py-0.5 rounded border ${
+                            SEVERITY_COLORS[inc.severity] ||
+                            "text-gray-400 bg-gray-900 border-gray-700"
+                          }`}
+                        >
+                          {inc.severity}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-xs text-gray-400 font-mono">
+                        {inc.type}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-400 max-w-32 truncate">
+                        {inc.session_id}
+                      </td>
+                      <td className="px-4 py-2 text-xs text-gray-300">
+                        {inc.message}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Policies Tab ──
 
 const POLICY_API = "http://localhost:9003";
@@ -494,11 +629,11 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto p-6">
         <TabBar
-          tabs={["Audit", "Policies"]}
+          tabs={["Audit", "Incidents", "Policies"]}
           active={tab}
           onChange={setTab}
         />
-        {tab === "Audit" ? <AuditTab /> : <PoliciesTab />}
+        {tab === "Audit" ? <AuditTab /> : tab === "Incidents" ? <IncidentsTab /> : <PoliciesTab />}
       </main>
     </div>
   );

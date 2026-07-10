@@ -1,7 +1,8 @@
 """Tracepath Incident Service — real-time audit event monitoring.
 
 Subscribes to NATS JetStream, evaluates every audit event through
-detectors, and emits incidents as structured logs.
+detectors, emits incidents as structured logs, and serves them via
+a simple HTTP API for the dashboard.
 """
 
 import asyncio
@@ -10,8 +11,10 @@ import logging
 import os
 import signal
 import uuid
+from datetime import datetime, timezone
 
 import nats
+from aiohttp import web
 from nats.js.api import ConsumerConfig, StorageType, StreamConfig
 
 from .detector import Detector
@@ -27,7 +30,64 @@ logging.basicConfig(
 STREAM_NAME = "AUDIT_EVENTS"
 SUBJECT = "audit.events.>"
 DURABLE_NAME = "incident-service"
+INCIDENTS_FILE = os.environ.get("INCIDENTS_FILE", "/data/incidents.jsonl")
 
+# ── In-memory incident cache ──
+_incidents: list[dict] = []
+_MAX_INCIDENTS = 1000
+
+
+def _persist_incident(incident_dict: dict) -> None:
+    """Append incident to JSONL file and in-memory list."""
+    _incidents.append(incident_dict)
+    if len(_incidents) > _MAX_INCIDENTS:
+        _incidents.pop(0)
+    try:
+        os.makedirs(os.path.dirname(INCIDENTS_FILE), exist_ok=True)
+        with open(INCIDENTS_FILE, "a") as f:
+            f.write(json.dumps(incident_dict) + "\n")
+    except OSError as e:
+        logger.error("failed to persist incident: %s", e)
+
+
+def _load_incidents_from_file() -> None:
+    """Load existing incidents from JSONL file on startup."""
+    try:
+        if os.path.exists(INCIDENTS_FILE):
+            with open(INCIDENTS_FILE) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        _incidents.append(json.loads(line))
+            _incidents[-_MAX_INCIDENTS:]  # keep last N
+            logger.info("loaded %d incidents from %s", len(_incidents), INCIDENTS_FILE)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("could not load incidents file: %s", e)
+
+
+# ── HTTP handlers ──
+
+async def handle_incidents(request: web.Request) -> web.Response:
+    """GET /api/incidents — return recent incidents."""
+    limit = int(request.query.get("limit", "100"))
+    session_id = request.query.get("session_id")
+    severity = request.query.get("severity")
+
+    filtered = _incidents
+    if session_id:
+        filtered = [i for i in filtered if i.get("session_id") == session_id]
+    if severity:
+        filtered = [i for i in filtered if i.get("severity") == severity]
+
+    result = filtered[-limit:]  # most recent
+    return web.json_response({"incidents": result, "total": len(result)})
+
+
+async def handle_health(request: web.Request) -> web.Response:
+    return web.json_response({"status": "ok", "service": "tracepath-incident"})
+
+
+# ── NATS consumer ──
 
 async def ensure_stream(js):
     """Create JetStream stream if it doesn't exist."""
@@ -48,7 +108,7 @@ async def ensure_stream(js):
 
 
 async def process_event(detector: Detector, msg):
-    """Parse an audit event from NATS, run detectors, log incidents."""
+    """Parse an audit event from NATS, run detectors, log and store incidents."""
     await msg.ack()
     try:
         data = json.loads(msg.data)
@@ -59,34 +119,27 @@ async def process_event(detector: Detector, msg):
 
     incident = await detector.evaluate(event)
     if incident:
-        payload = json.dumps(
-            {
-                "id": incident.id,
-                "type": incident.incident_type.value,
-                "severity": incident.severity.value,
-                "session_id": incident.session_id,
-                "agent_id": incident.agent_id,
-                "message": incident.message,
-                "context": incident.context,
-                "detected_at": incident.detected_at,
-            }
-        )
+        incident_dict = {
+            "id": incident.id,
+            "type": incident.incident_type.value,
+            "severity": incident.severity.value,
+            "session_id": incident.session_id,
+            "agent_id": incident.agent_id,
+            "message": incident.message,
+            "context": incident.context,
+            "detected_at": incident.detected_at.isoformat()
+            if isinstance(incident.detected_at, datetime)
+            else incident.detected_at,
+        }
+        payload = json.dumps(incident_dict)
         logger.warning("INCIDENT|%s", payload)
+        _persist_incident(incident_dict)
 
 
-async def main():
-    nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
-    nc = await nats.connect(nats_url)
-    js = nc.jetstream()
-
-    await ensure_stream(js)
-
-    gemini = GeminiClassifier()
-    detector = Detector(gemini=gemini)
-
-    # Subscribe with durable consumer for at-least-once delivery
+async def run_nats_consumer(nc, js, detector):
+    """Run NATS pull consumer loop."""
     consumer_config = ConsumerConfig(
-        durable_name="incident-service",
+        durable_name=DURABLE_NAME,
         deliver_policy="all",
         ack_policy="explicit",
     )
@@ -99,6 +152,44 @@ async def main():
     )
     logger.info("incident service subscribed to %s (stream: %s)", SUBJECT, STREAM_NAME)
 
+    while True:
+        try:
+            msgs = await sub.fetch(batch=10, timeout=5)
+            for msg in msgs:
+                await process_event(detector, msg)
+        except asyncio.TimeoutError:
+            continue
+        except nats.errors.TimeoutError:
+            continue
+
+
+# ── Main ──
+
+async def main():
+    nats_url = os.environ.get("NATS_URL", "nats://localhost:4222")
+    http_port = int(os.environ.get("INCIDENT_HTTP_PORT", "9004"))
+
+    # Load persisted incidents
+    _load_incidents_from_file()
+
+    # Connect NATS
+    nc = await nats.connect(nats_url)
+    js = nc.jetstream()
+    await ensure_stream(js)
+
+    gemini = GeminiClassifier()
+    detector = Detector(gemini=gemini)
+
+    # Start HTTP server
+    app = web.Application()
+    app.router.add_get("/api/incidents", handle_incidents)
+    app.router.add_get("/health", handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", http_port)
+    await site.start()
+    logger.info("incident HTTP API listening on 0.0.0.0:%d", http_port)
+
     # Graceful shutdown
     shutdown = asyncio.Event()
 
@@ -110,18 +201,15 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _signal_handler)
 
+    # Run NATS consumer as background task
+    consumer_task = asyncio.create_task(run_nats_consumer(nc, js, detector))
+
     try:
-        while not shutdown.is_set():
-            try:
-                msgs = await sub.fetch(batch=10, timeout=5)
-                for msg in msgs:
-                    await process_event(detector, msg)
-            except asyncio.TimeoutError:
-                continue
-            except nats.errors.TimeoutError:
-                continue
+        await shutdown.wait()
     finally:
+        consumer_task.cancel()
         await nc.drain()
+        await runner.cleanup()
         logger.info("incident service stopped")
 
 

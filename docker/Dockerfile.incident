@@ -1,5 +1,5 @@
 FROM python:3.12-slim
 WORKDIR /app
 COPY incident/ /app/
-RUN pip install --no-cache-dir nats-py google-genai
+RUN pip install --no-cache-dir nats-py google-genai aiohttp
 CMD ["python3", "-m", "incident_service.main"]
