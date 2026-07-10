@@ -6,7 +6,7 @@ COPY gateway/ ./gateway/
 COPY docker/init.sql ./docker/init.sql
 RUN cargo build --release --bin tracepath-gateway
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/tracepath-gateway /usr/local/bin/tracepath-gateway
 EXPOSE 9001

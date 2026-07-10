@@ -550,11 +550,17 @@ async fn main() -> std::io::Result<()> {
 
     info!("PostgreSQL connected");
 
-    // Run migrations
-    sqlx::query(include_str!("../../docker/init.sql"))
-        .execute(&db_pool)
-        .await
-        .expect("failed to run schema migration");
+    // Run migrations — split by statement because sqlx::query rejects multi-statement SQL
+    for stmt in include_str!("../../docker/init.sql")
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        sqlx::query(stmt)
+            .execute(&db_pool)
+            .await
+            .expect("failed to run migration statement");
+    }
 
     info!("schema migration applied");
 
