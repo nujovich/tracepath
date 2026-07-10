@@ -213,7 +213,7 @@ async fn evaluate_policy(engine: &PolicyEngine, input: &serde_json::Value) -> Po
 
     let result: Result<serde_json::Value, _> = engine.policy.evaluate(
         &mut *store,
-        "tracepath/main",
+        "tracepath/main/decision",
         input,
     ).await;
 

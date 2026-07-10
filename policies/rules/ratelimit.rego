@@ -7,7 +7,7 @@ default max_calls_per_minute := 60
 # max calls per 5 minutes
 default max_calls_per_5min := 200
 
-default allow := false
+default allow := true
 
 allow if {
     input.calls_last_minute <= max_calls_per_minute

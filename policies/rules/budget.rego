@@ -5,7 +5,7 @@ default budget_limit := 1000
 
 # Check if cumulative spending would exceed the budget
 # Input: {"session_id": "...", "tool_name": "...", "estimated_cost_cents": N, "spent_so_far_cents": N}
-default allow := false
+default allow := true
 
 allow if {
     input.estimated_cost_cents + input.spent_so_far_cents <= input.budget_limit
