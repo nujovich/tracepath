@@ -1,0 +1,189 @@
+# ── Global settings ──
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# ── Gateway ──
+gateway:
+  enabled: true
+  image:
+    repository: tracepath/gateway
+    tag: "0.3.0"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 9001
+  ingress:
+    enabled: true
+    className: nginx
+    host: tracepath.example.com
+    tls: []
+  # Security
+  signingKey: ""  # REQUIRED: 64 hex chars (32-byte Ed25519 seed)
+  existingSigningKeySecret: ""  # use existing k8s secret instead of signingKey
+  # Policy
+  opa:
+    enabled: true
+    bundlePath: /app/policies/bundle.tar.gz
+  # Observability
+  otel:
+    enabled: false
+    endpoint: ""
+    serviceName: tracepath-gateway
+    langfusePublicKey: ""
+    langfuseSecretKey: ""
+
+# ── PostgreSQL ──
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  auth:
+    username: tracepath
+    password: tracepath
+    database: tracepath
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+# ── NATS ──
+nats:
+  enabled: true
+  image:
+    repository: nats
+    tag: "2.10-alpine"
+  jetstream:
+    enabled: true
+    fileStore:
+      enabled: true
+      dir: /data
+      pvc:
+        enabled: true
+        size: 10Gi
+        storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ── MinIO (WORM storage) ──
+minio:
+  enabled: true
+  image:
+    repository: minio/minio
+    tag: latest
+  mode: standalone
+  auth:
+    rootUser: minioadmin
+    rootPassword: minioadmin
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+  buckets:
+    - name: tracepath-worm
+      retention: 365d
+      locking: true
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+# ── Incident Service ──
+incident:
+  enabled: true
+  image:
+    repository: tracepath/incident
+    tag: "0.3.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  gemini:
+    enabled: false
+    apiKey: ""
+
+# ── Policy API ──
+policies:
+  enabled: true
+  image:
+    repository: tracepath/policies
+    tag: "0.3.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9003
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# ── Dashboard ──
+dashboard:
+  enabled: true
+  image:
+    repository: tracepath/dashboard
+    tag: "0.3.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: true
+    className: nginx
+    host: tracepath.example.com
+    tls: []
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# ── Service Account ──
+serviceAccount:
+  create: true
+  name: tracepath
+
+# ── Pod Security Context ──
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false

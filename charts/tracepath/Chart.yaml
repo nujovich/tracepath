@@ -1,0 +1,21 @@
+apiVersion: v2
+name: tracepath
+description: Tracepath — Agent Audit Stack. Middleware for auditable, traceable, and compliant AI agents.
+type: application
+version: 0.3.0
+appVersion: "0.3.0"
+keywords:
+  - ai
+  - audit
+  - compliance
+  - eu-ai-act
+  - finra
+  - soc2
+  - opa
+  - agents
+home: https://github.com/nujovich/tracepath
+sources:
+  - https://github.com/nujovich/tracepath
+maintainers:
+  - name: Tracepath Team
+    email: tracepath@mermelada.tech

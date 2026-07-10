@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tracepath.fullname" . }}-incident
+  labels:
+    {{- include "tracepath.labels" . | nindent 4 }}
+    app.kubernetes.io/component: incident
+spec:
+  replicas: {{ .Values.incident.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tracepath
+      app.kubernetes.io/component: incident
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tracepath
+        app.kubernetes.io/component: incident
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+      - name: incident
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.incident.image.repository }}:{{ .Values.incident.image.tag }}"
+        imagePullPolicy: {{ .Values.incident.image.pullPolicy }}
+        envFrom:
+        - configMapRef:
+            name: {{ include "tracepath.fullname" . }}-incident
+        {{- if .Values.incident.gemini.enabled }}
+        env:
+        - name: GOOGLE_API_KEY
+          value: {{ .Values.incident.gemini.apiKey | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.incident.resources | nindent 10 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tracepath.fullname" . }}-dashboard
+  labels:
+    {{- include "tracepath.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+spec:
+  replicas: {{ .Values.dashboard.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tracepath
+      app.kubernetes.io/component: dashboard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tracepath
+        app.kubernetes.io/component: dashboard
+    spec:
+      containers:
+      - name: dashboard
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag }}"
+        ports:
+        - containerPort: 80
+        resources:
+          {{- toYaml .Values.dashboard.resources | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tracepath.fullname" . }}-dashboard
+  labels:
+    {{- include "tracepath.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+spec:
+  type: {{ .Values.dashboard.service.type }}
+  ports:
+  - port: {{ .Values.dashboard.service.port }}
+    targetPort: 80
+    name: http
+  selector:
+    app.kubernetes.io/name: tracepath
+    app.kubernetes.io/component: dashboard
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tracepath.fullname" . }}-policies
+  labels:
+    {{- include "tracepath.labels" . | nindent 4 }}
+    app.kubernetes.io/component: policies
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tracepath
+      app.kubernetes.io/component: policies
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tracepath
+        app.kubernetes.io/component: policies
+    spec:
+      containers:
+      - name: policies
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.policies.image.repository }}:{{ .Values.policies.image.tag }}"
+        ports:
+        - containerPort: 9003
+        resources:
+          {{- toYaml .Values.policies.resources | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tracepath.fullname" . }}-policies
+  labels:
+    {{- include "tracepath.labels" . | nindent 4 }}
+    app.kubernetes.io/component: policies
+spec:
+  type: {{ .Values.policies.service.type }}
+  ports:
+  - port: {{ .Values.policies.service.port }}
+    targetPort: 9003
+    name: http
+  selector:
+    app.kubernetes.io/name: tracepath
+    app.kubernetes.io/component: policies

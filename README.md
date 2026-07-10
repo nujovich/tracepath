@@ -109,6 +109,21 @@ Dashboard (React, Fase 2)
 | `POST` | `/audit/step` | Record an audit step (signed + policy-checked) |
 | `GET` | `/audit/events` | Query audit events (filtered, paginated) |
 
+## Observability (OpenTelemetry)
+
+The gateway exports traces and spans to **LangFuse** via OTLP (HTTP). Disabled by default — enable with env vars:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://cloud.langfuse.com/api/public/otel"
+export OTEL_SERVICE_NAME="tracepath-gateway"
+export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+export LANGFUSE_SECRET_KEY="sk-lf-..."
+```
+
+Alternative: set `LANGFUSE_OTLP_ENDPOINT` instead of `OTEL_EXPORTER_OTLP_ENDPOINT` for self-hosted LangFuse.
+
+When unset, the gateway logs to stdout (JSON) with zero overhead from OTLP.
+
 ## Policies
 
 Located in `policies/rules/`. Compile with:

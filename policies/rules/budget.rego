@@ -16,3 +16,4 @@ deny contains msg if {
     msg := sprintf("budget exceeded: cost %d + spent %d > limit %d",
                    [input.estimated_cost_cents, input.spent_so_far_cents, input.budget_limit])
 }
+# test comment

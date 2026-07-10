@@ -1,0 +1,13 @@
+[project]
+name = "tracepath-policies"
+version = "0.1.0"
+description = "Policy versioning and replay engine for Tracepath"
+requires-python = ">=3.11"
+dependencies = [
+    "pygit2>=1.14",
+    "requests>=2.31",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

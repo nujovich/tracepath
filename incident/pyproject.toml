@@ -1,0 +1,20 @@
+[project]
+name = "tracepath-incident"
+version = "0.1.0"
+description = "Real-time incident detection for Tracepath audit events"
+requires-python = ">=3.11"
+dependencies = [
+    "nats-py>=0.9",
+    "requests>=2.31",
+    "google-genai>=1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]

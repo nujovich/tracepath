@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tracepath.fullname" . }}-gateway
+  labels:
+    {{- include "tracepath.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tracepath
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tracepath
+        app.kubernetes.io/component: gateway
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: gateway
+        image: "{{ .Values.global.imageRegistry }}{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+        imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+        ports:
+        - containerPort: 9001
+          name: http
+        env:
+        - name: AUDIT_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "tracepath.fullname" . }}-gateway
+              key: AUDIT_SIGNING_KEY
+        - name: DATABASE_URL
+          value: "postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ include "tracepath.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}"
+        - name: NATS_URL
+          value: "nats://{{ include "tracepath.fullname" . }}-nats:4222"
+        - name: S3_ENDPOINT
+          value: "http://{{ include "tracepath.fullname" . }}-minio:9000"
+        {{- if .Values.gateway.otel.enabled }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ .Values.gateway.otel.endpoint | quote }}
+        - name: OTEL_SERVICE_NAME
+          value: {{ .Values.gateway.otel.serviceName | quote }}
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "tracepath.fullname" . }}-gateway
+              key: LANGFUSE_PUBLIC_KEY
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "tracepath.fullname" . }}-gateway
+              key: LANGFUSE_SECRET_KEY
+        {{- end }}
+        envFrom:
+        - configMapRef:
+            name: {{ include "tracepath.fullname" . }}-gateway
+        resources:
+          {{- toYaml .Values.gateway.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9001
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9001
+          initialDelaySeconds: 3
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tracepath.fullname" . }}-gateway
+  labels:
+    {{- include "tracepath.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: {{ .Values.gateway.service.type }}
+  ports:
+  - port: {{ .Values.gateway.service.port }}
+    targetPort: 9001
+    protocol: TCP
+    name: http
+  selector:
+    app.kubernetes.io/name: tracepath
+    app.kubernetes.io/component: gateway

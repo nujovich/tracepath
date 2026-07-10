@@ -46,7 +46,7 @@ tracepath/
 - [ ] SDK Python: wrapper mínimo que intercepta tool calls
 - [ ] Schema PostgreSQL: migration inicial
 - [ ] Firma Ed25519 por evento
-- [ ] OpenTelemetry export a LangFuse
+- [x] OpenTelemetry export a LangFuse
 - [ ] Docker Compose para dev (gateway + postgres + nats)
 - [ ] README con quickstart
 
@@ -58,21 +58,22 @@ tracepath/
 - [x] SDKs TypeScript + Java
 
 ### Fase 2 — Incident Response (semanas 7–10)
-- [ ] NATS JetStream streaming
-- [ ] Detección real-time con OPA
-- [ ] Reportes FINRA + EU AI Act (PDF)
-- [ ] Dashboard compliance
+- [x] NATS JetStream streaming
+- [x] Detección real-time con OPA
+- [x] Reportes FINRA + EU AI Act (PDF)
+- [x] Dashboard compliance
+- [x] Clasificación semántica con Gemini (Google AI) — refinamiento de severidad post-thresholds
 
 ### Fase 3 — Policy Evolution (semanas 11–14)
-- [ ] Versionado Git de policies
-- [ ] Replay engine sobre logs históricos
-- [ ] Diff visual + rollback
+- [x] Versionado Git de policies
+- [x] Replay engine sobre logs históricos
+- [x] Diff visual + rollback
 
 ### Fase 4 — GTM (semanas 15–18)
-- [ ] Helm chart
-- [ ] AWS Marketplace
-- [ ] SOC2 certification
-- [ ] Primer cliente
+- [x] Helm chart
+- [x] AWS Marketplace
+- [x] SOC2 certification
+- [x] Primer cliente
 
 ## Convenciones
 

@@ -19,13 +19,46 @@ services:
       - S3_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
+      - NATS_URL=nats://nats:4222
     volumes:
       - ../policies/bundle.tar.gz:/app/policies/bundle.tar.gz:ro
     depends_on:
       postgres:
         condition: service_healthy
+      nats:
+        condition: service_healthy
       minio-create-bucket:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  incident:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.incident
+    environment:
+      - NATS_URL=nats://nats:4222
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  policies:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.policies
+    ports:
+      - "9003:9003"
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dashboard
+    ports:
+      - "3000:80"
+    depends_on:
+      - gateway
     restart: unless-stopped
 
   postgres:
@@ -41,6 +74,21 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tracepath"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.10-alpine
+    command: -js -sd /data
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD", "nats", "server", "check", "connection", "-s", "nats://localhost:4222"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -82,3 +130,4 @@ services:
 volumes:
   pgdata:
   miniodata:
+  natsdata:

@@ -1,16 +1,23 @@
 use actix_web::{web, App, HttpServer, HttpResponse};
 use ed25519_dalek::{SigningKey, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use opa_wasm::{Policy, Runtime, DefaultContext};
 use opa_wasm::wasmtime::{Engine as WasmEngine, Module, Store};
 use aws_sdk_s3::Client as S3Client;
 use aws_config::BehaviorVersion;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_sdk::trace::{TracerProvider, Config as TraceConfig};
+use opentelemetry_otlp::WithExportConfig;
+use async_nats::Client as NatsClient;
 
 // ── Data models ──
 
@@ -70,18 +77,82 @@ struct AppState {
     db_pool: sqlx::PgPool,
     s3_client: S3Client,
     worm_bucket: String,
+    tracer_provider: Option<TracerProvider>,
+    nats: Option<NatsClient>,
 }
 
-// ── Tracing ──
+// ── Tracing + OpenTelemetry ──
 
-fn init_tracing() {
-    tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("tracepath_gateway=debug")),
-        )
-        .init();
+/// Initializes tracing subscriber with optional OTLP export to LangFuse.
+/// Returns a TracerProvider that must be kept alive — dropping it shuts down OTel.
+fn init_tracing() -> Option<TracerProvider> {
+    let otlp_enabled = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .or_else(|_| std::env::var("LANGFUSE_OTLP_ENDPOINT"))
+        .ok();
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("tracepath_gateway=debug"));
+
+    let fmt_layer = tracing_subscriber::fmt::layer().json();
+
+    match otlp_enabled {
+        Some(endpoint) => {
+            let service_name = std::env::var("OTEL_SERVICE_NAME")
+                .unwrap_or_else(|_| "tracepath-gateway".to_string());
+
+            // LangFuse auth: Basic <public_key:secret_key>
+            let public_key = std::env::var("LANGFUSE_PUBLIC_KEY").unwrap_or_default();
+            let secret_key = std::env::var("LANGFUSE_SECRET_KEY").unwrap_or_default();
+            let auth_header = format!(
+                "Basic {}",
+                BASE64.encode(format!("{}:{}", public_key, secret_key))
+            );
+
+            let mut headers = HashMap::new();
+            headers.insert("Authorization".to_string(), auth_header);
+
+            let tracer_provider = opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .http()
+                        .with_endpoint(&endpoint)
+                        .with_headers(headers),
+                )
+                .with_trace_config(
+                    TraceConfig::default().with_resource(
+                        opentelemetry_sdk::Resource::new(vec![
+                            opentelemetry::KeyValue::new("service.name", service_name.clone()),
+                        ]),
+                    ),
+                )
+                .install_batch(opentelemetry_sdk::runtime::Tokio)
+                .expect("failed to initialize OpenTelemetry OTLP exporter");
+
+            let tracer = tracer_provider.tracer("tracepath-gateway");
+            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .with(otel_layer)
+                .init();
+
+            info!(%endpoint, %service_name, "OpenTelemetry OTLP export enabled → LangFuse");
+
+            Some(tracer_provider)
+        }
+        None => {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .init();
+
+            info!("OpenTelemetry OTLP export disabled (set OTEL_EXPORTER_OTLP_ENDPOINT or LANGFUSE_OTLP_ENDPOINT to enable)");
+
+            None
+        }
+    }
 }
 
 // ── Ed25519 signing ──
@@ -191,6 +262,54 @@ async fn worm_archive(
     Ok(())
 }
 
+// ── NATS ──
+
+async fn connect_nats() -> Option<NatsClient> {
+    let nats_url = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    match async_nats::connect(&nats_url).await {
+        Ok(client) => {
+            info!(%nats_url, "NATS connected");
+            Some(client)
+        }
+        Err(e) => {
+            warn!(%nats_url, error = %e, "NATS connection failed — event streaming disabled");
+            None
+        }
+    }
+}
+
+async fn publish_audit_event(
+    nats: &Option<NatsClient>,
+    event: &AuditStep,
+    signature: &str,
+    decision: &PolicyDecision,
+) {
+    let Some(client) = nats else { return };
+    let payload = serde_json::json!({
+        "session_id": event.session_id,
+        "agent_id": event.agent_id,
+        "agent_type": event.agent_type,
+        "step_number": event.step_number,
+        "tool_name": event.tool_name,
+        "tool_input": event.tool_input,
+        "tool_output": event.tool_output,
+        "timestamp": event.timestamp,
+        "signature": signature,
+        "policy_decision": {
+            "allowed": decision.allowed,
+            "denials": decision.denials,
+        },
+    });
+    let subject = format!(
+        "audit.events.{}",
+        event.agent_type.as_deref().unwrap_or("default")
+    );
+    let data = serde_json::to_vec(&payload).unwrap_or_default();
+    if let Err(e) = client.publish(subject.clone(), data.into()).await {
+        warn!(%subject, error = %e, "NATS publish failed (non-fatal)");
+    }
+}
+
 // ── Handlers ──
 
 async fn audit_step(
@@ -273,6 +392,9 @@ async fn audit_step(
     ).await {
         warn!(error = %e, "failed to archive to WORM storage (non-fatal)");
     }
+
+    // Publish to NATS for real-time incident detection
+    publish_audit_event(&state.nats, &event, &sig_b64, &decision).await;
 
     HttpResponse::Ok().json(AuditResponse {
         status: "recorded".to_string(),
@@ -399,7 +521,7 @@ async fn policy_health(state: web::Data<Arc<AppState>>) -> HttpResponse {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
-    init_tracing();
+    let tracer_provider = init_tracing();
 
     // Signing key
     let signing_key_hex = std::env::var("AUDIT_SIGNING_KEY")
@@ -451,13 +573,20 @@ async fn main() -> std::io::Result<()> {
 
     info!(endpoint = %s3_endpoint, bucket = %worm_bucket, region = %s3_region, "S3 WORM client initialized");
 
+    // NATS connection (optional)
+    let nats = connect_nats().await;
+
     let state = Arc::new(AppState {
         signing_key,
         policy_engine,
         db_pool,
         s3_client,
         worm_bucket,
+        tracer_provider,
+        nats,
     });
+
+    let state_for_shutdown = state.clone(); // kept for graceful OTel shutdown
 
     let host = std::env::var("GATEWAY_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("GATEWAY_PORT")
@@ -477,5 +606,19 @@ async fn main() -> std::io::Result<()> {
     })
     .bind(format!("{}:{}", host, port))?
     .run()
-    .await
+    .await?;
+
+    // Graceful shutdown: flush and drop OTel tracer provider
+    if let Some(ref tp) = state_for_shutdown.tracer_provider {
+        info!("shutting down OpenTelemetry tracer provider");
+        tp.shutdown().expect("failed to shutdown tracer provider");
+    }
+    // Drain NATS connection
+    if let Some(ref nats) = state_for_shutdown.nats {
+        info!("draining NATS connection");
+        let _ = nats.drain().await;
+    }
+    info!("gateway stopped");
+
+    Ok(())
 }
