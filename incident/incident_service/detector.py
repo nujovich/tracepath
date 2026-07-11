@@ -184,7 +184,7 @@ class Detector:
                 elapsed = (last_ts - first_ts).total_seconds()
                 # elapsed=0 means all events in same second → instant breach
                 if elapsed <= 0:
-                    rate = float('inf')
+                    rate = float(session.step_count)
                 else:
                     rate = session.step_count / (elapsed / 60)
                 if rate > self.RATE_LIMIT_PER_MINUTE:
@@ -195,13 +195,13 @@ class Detector:
                         session_id=session.session_id,
                         agent_id=session.agent_id,
                         message=(
-                            f"Rate limit approaching: {rate:.0f} calls/min "
-                            f"(limit: {self.RATE_LIMIT_PER_MINUTE})"
+                            f"Rate limit breach: {session.step_count} calls in "
+                            f"{elapsed:.1f}s (limit: {self.RATE_LIMIT_PER_MINUTE}/min)"
                         ),
                         context={
                             "current_rate": round(rate, 1),
                             "rate_limit": self.RATE_LIMIT_PER_MINUTE,
-                            "elapsed_seconds": elapsed,
+                            "elapsed_seconds": round(elapsed, 3),
                         },
                     )
             except ValueError:
