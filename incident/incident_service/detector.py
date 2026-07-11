@@ -58,8 +58,8 @@ class Detector:
         incident = (
             self._check_budget(session)
             or self._check_denial_spike(session)
-            or self._check_suspicious_pattern(session, event)
             or self._check_rate_limit(session, event)
+            or self._check_suspicious_pattern(session, event)
         )
 
         # ── Gemini refinement pass ──
