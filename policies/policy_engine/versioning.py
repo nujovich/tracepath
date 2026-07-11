@@ -120,7 +120,7 @@ class PolicyVersioning:
         """Get the content of a policy file at a specific commit."""
         repo = self._get_repo()
         try:
-            commit = repo.get(pygit2.Oid(hex=commit_hash))
+            commit = repo.revparse_single(commit_hash)
             tree = commit.tree
             entry = tree[f"{RULES_DIR}/{filename}"]
             blob = repo[entry.id]
