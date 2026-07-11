@@ -505,12 +505,12 @@ async fn health() -> HttpResponse {
 
 async fn proxy_incidents(req: HttpRequest) -> HttpResponse {
     let client = Client::new();
-    let incident_url = format!(
-        "http://incident:9004/api/incidents{}",
-        req.query_string()
-            .map(|q| format!("?{}", q))
-            .unwrap_or_default()
-    );
+    let qs = req.query_string();
+    let incident_url = if qs.is_empty() {
+        "http://incident:9004/api/incidents".to_string()
+    } else {
+        format!("http://incident:9004/api/incidents?{}", qs)
+    };
 
     match client.get(&incident_url).send().await {
         Ok(mut res) => {
