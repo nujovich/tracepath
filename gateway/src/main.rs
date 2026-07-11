@@ -525,6 +525,41 @@ async fn proxy_incidents(req: HttpRequest) -> HttpResponse {
     }
 }
 
+async fn proxy_policies(req: HttpRequest, body: web::Bytes) -> HttpResponse {
+    let client = Client::new();
+    let path = req.path();
+    // Strip /policies prefix → forward to policy service's /api/policies/...
+    let target_path = path.replacen("/policies", "/api/policies", 1);
+    let qs = req.query_string();
+    let policy_url = if qs.is_empty() {
+        format!("http://policies:9003{}", target_path)
+    } else {
+        format!("http://policies:9003{}?{}", target_path, qs)
+    };
+
+    let result = match req.method().as_str() {
+        "GET" => client.get(&policy_url).send().await,
+        "POST" => client.post(&policy_url).send_body(body.to_vec()).await,
+        _ => {
+            return HttpResponse::MethodNotAllowed().json(serde_json::json!({
+                "error": "method not allowed"
+            }))
+        }
+    };
+
+    match result {
+        Ok(mut res) => {
+            let resp_body = res.body().await.unwrap_or_default();
+            HttpResponse::Ok()
+                .content_type("application/json")
+                .body(resp_body)
+        }
+        Err(_) => HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "error": "policy service unavailable"
+        })),
+    }
+}
+
 async fn policy_health(state: web::Data<Arc<AppState>>) -> HttpResponse {
     let test_input = serde_json::json!({
         "action": "health_check",
@@ -635,6 +670,7 @@ async fn main() -> std::io::Result<()> {
             .route("/audit/step", web::post().to(audit_step))
             .route("/audit/events", web::get().to(query_events))
             .route("/incidents", web::get().to(proxy_incidents))
+            .route("/policies/{tail:.*}", web::route().to(proxy_policies))
     })
     .bind(format!("{}:{}", host, port))?
     .run()

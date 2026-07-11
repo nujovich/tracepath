@@ -419,7 +419,7 @@ function IncidentsTab() {
 
 // ── Policies Tab ──
 
-const POLICY_API = "http://localhost:9003";
+const POLICY_BASE = "/api/policies";
 
 function PoliciesTab() {
   const [versions, setVersions] = useState<PolicyVersion[]>([]);
@@ -429,7 +429,7 @@ function PoliciesTab() {
 
   const fetchVersions = async () => {
     try {
-      const res = await fetch(`${POLICY_API}/api/policies/versions`);
+      const res = await fetch(`${POLICY_BASE}/versions`);
       const data = await res.json();
       setVersions(data);
     } catch {
@@ -446,7 +446,7 @@ function PoliciesTab() {
     setLoading(true);
     try {
       const res = await fetch(
-        `${POLICY_API}/api/policies/diff?old=${oldHash}&new=${newHash}`
+        `${POLICY_BASE}/diff?old=${oldHash}&new=${newHash}`
       );
       const data = await res.json();
       setDiff(data);
@@ -460,7 +460,7 @@ function PoliciesTab() {
   const rollback = async (hash: string, message: string) => {
     if (!confirm(`Rollback to "${message}" (${hash})?`)) return;
     try {
-      const res = await fetch(`${POLICY_API}/api/policies/rollback`, {
+      const res = await fetch(`${POLICY_BASE}/rollback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ hash }),
