@@ -58,3 +58,4 @@ class SessionState:
     tool_counts: dict[str, int] = field(default_factory=dict)
     cumulative_cost_cents: int = 0
     last_step_at: str = ""
+    first_step_at: str = ""

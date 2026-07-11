@@ -37,6 +37,8 @@ class Detector:
         """
         session = self._get_or_create_session(event)
         session.step_count += 1
+        if session.step_count == 1:
+            session.first_step_at = event.timestamp
         session.last_step_at = event.timestamp
 
         # Track tool usage
@@ -175,12 +177,11 @@ class Detector:
     def _check_rate_limit(
         self, session: SessionState, event: AuditEvent
     ) -> Optional[Incident]:
-        # Simple check: if step count is high enough, assume rate limit concern
-        if session.step_count >= self.RATE_LIMIT_PER_MINUTE:
+        if session.step_count >= self.RATE_LIMIT_PER_MINUTE and session.first_step_at:
             try:
-                first_ts = datetime.fromisoformat(session.last_step_at)
-                now = datetime.now(timezone.utc)
-                elapsed = (now - first_ts).total_seconds()
+                first_ts = datetime.fromisoformat(session.first_step_at)
+                last_ts = datetime.fromisoformat(session.last_step_at)
+                elapsed = (last_ts - first_ts).total_seconds()
                 if elapsed > 0:
                     rate = session.step_count / (elapsed / 60)
                     if rate > self.RATE_LIMIT_PER_MINUTE:
