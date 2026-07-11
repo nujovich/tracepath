@@ -634,7 +634,7 @@ async fn main() -> std::io::Result<()> {
             .route("/health/policy", web::get().to(policy_health))
             .route("/audit/step", web::post().to(audit_step))
             .route("/audit/events", web::get().to(query_events))
-            .route("/api/incidents", web::get().to(proxy_incidents))
+            .route("/incidents", web::get().to(proxy_incidents))
     })
     .bind(format!("{}:{}", host, port))?
     .run()
