@@ -41,10 +41,11 @@ class PolicyVersioning:
         self._repo: pygit2.Repository | None = None
 
         # Initialize repo if needed
-        if not os.path.isdir(os.path.join(repo_path, ".git")):
-            self._init_repo()
-        else:
+        try:
             self._repo = pygit2.Repository(repo_path)
+        except pygit2.GitError:
+            logger.info("No git repo at %s — initializing", repo_path)
+            self._init_repo()
 
     # ── Public API ──
 
