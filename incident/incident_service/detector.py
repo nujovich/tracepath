@@ -182,25 +182,28 @@ class Detector:
                 first_ts = datetime.fromisoformat(session.first_step_at)
                 last_ts = datetime.fromisoformat(session.last_step_at)
                 elapsed = (last_ts - first_ts).total_seconds()
-                if elapsed > 0:
+                # elapsed=0 means all events in same second → instant breach
+                if elapsed <= 0:
+                    rate = float('inf')
+                else:
                     rate = session.step_count / (elapsed / 60)
-                    if rate > self.RATE_LIMIT_PER_MINUTE:
-                        return Incident(
-                            id=f"ratelimit-{session.session_id}",
-                            incident_type=IncidentType.RATE_LIMIT_BREACH,
-                            severity=Severity.WARNING,
-                            session_id=session.session_id,
-                            agent_id=session.agent_id,
-                            message=(
-                                f"Rate limit approaching: {rate:.0f} calls/min "
-                                f"(limit: {self.RATE_LIMIT_PER_MINUTE})"
-                            ),
-                            context={
-                                "current_rate": round(rate, 1),
-                                "rate_limit": self.RATE_LIMIT_PER_MINUTE,
-                                "elapsed_seconds": elapsed,
-                            },
-                        )
+                if rate > self.RATE_LIMIT_PER_MINUTE:
+                    return Incident(
+                        id=f"ratelimit-{session.session_id}",
+                        incident_type=IncidentType.RATE_LIMIT_BREACH,
+                        severity=Severity.WARNING,
+                        session_id=session.session_id,
+                        agent_id=session.agent_id,
+                        message=(
+                            f"Rate limit approaching: {rate:.0f} calls/min "
+                            f"(limit: {self.RATE_LIMIT_PER_MINUTE})"
+                        ),
+                        context={
+                            "current_rate": round(rate, 1),
+                            "rate_limit": self.RATE_LIMIT_PER_MINUTE,
+                            "elapsed_seconds": elapsed,
+                        },
+                    )
             except ValueError:
                 pass
         return None
