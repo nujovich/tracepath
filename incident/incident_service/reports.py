@@ -393,8 +393,13 @@ class ReportGenerator:
 
             details_parts = []
             for d in s.details:
-                key = d.get("metric") or d.get("mechanism") or d.get("key") or d.get("title") or ""
-                val = d.get("value") or d.get("status") or d.get("summary") or ""
+                items = list(d.items())
+                if len(items) >= 2:
+                    key, val = items[0][1], items[1][1]  # use values of first two items
+                elif items:
+                    key, val = items[0][0], items[0][1]
+                else:
+                    key, val = "", ""
                 details_parts.append(f"<tr><td>{key}</td><td>{val}</td></tr>")
             details_html = "".join(details_parts)
 
