@@ -45,6 +45,7 @@ class GeminiClassifier:
         self._enabled = False
         self._model = "gemini-2.0-flash"
         self._cache: dict[str, dict] = {}  # deduplicate identical incident patterns
+        self._cache_file = os.environ.get("GEMINI_CACHE_FILE", "/data/gemini-cache.json")
 
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if api_key:
@@ -53,6 +54,7 @@ class GeminiClassifier:
                 self._client = genai.Client(api_key=api_key)
                 self._enabled = True
                 logger.info("Gemini classifier enabled (model: %s)", self._model)
+                self._load_cache()
             except Exception as e:
                 logger.warning("Gemini classifier init failed: %s — falling back to thresholds only", e)
         else:
@@ -116,6 +118,7 @@ class GeminiClassifier:
 
             # Cache the result
             self._cache[cache_key] = {"severity": new_severity, "reasoning": reasoning}
+            self._save_cache()
 
         except Exception as e:
             logger.warning("Gemini classification failed (non-fatal): %s", e)
@@ -133,3 +136,22 @@ class GeminiClassifier:
             f"Policy denials: {denied_count}. "
             f"Estimated cost: {cost_cents} cents."
         )
+
+    def _load_cache(self) -> None:
+        """Load persisted Gemini cache from disk."""
+        try:
+            if os.path.isfile(self._cache_file):
+                with open(self._cache_file) as f:
+                    self._cache = json.load(f)
+                logger.info("Gemini cache loaded: %d entries", len(self._cache))
+        except Exception:
+            logger.debug("No Gemini cache file found (first run)")
+
+    def _save_cache(self) -> None:
+        """Persist Gemini cache to disk."""
+        try:
+            os.makedirs(os.path.dirname(self._cache_file), exist_ok=True)
+            with open(self._cache_file, "w") as f:
+                json.dump(self._cache, f)
+        except Exception as e:
+            logger.warning("Failed to save Gemini cache: %s", e)
