@@ -5,6 +5,8 @@
 > *"Can you audit what your agents did yesterday?"*
 > Tracepath answers that with immutable Ed25519-signed logs, real-time policy enforcement, and a compliance dashboard.
 
+> 🏆 **Submitted to [DEV Weekend Challenge: Passion Edition](https://dev.to/challenges/weekend-2026-07-09)** — Best Use of Google AI category
+
 ---
 
 ## Table of Contents
@@ -12,14 +14,15 @@
 - [Quickstart](#quickstart)
 - [What Tracepath Does](#what-tracepath-does)
 - [Architecture](#architecture)
-- [Phase 1 — Foundation (MVP)](#phase-1--foundation-mvp)
-- [Phase 2 — Incident Response](#phase-2--incident-response)
-- [Phase 3 — Policy Evolution](#phase-3--policy-evolution)
+- [Dashboard](#dashboard)
 - [API Reference](#api-reference)
 - [Python SDK](#python-sdk)
 - [Policy Engine](#policy-engine)
+- [Incident Detection](#incident-detection)
+- [Gemini Semantic Classifier](#gemini-semantic-classifier)
+- [Compliance Reports](#compliance-reports)
 - [Observability](#observability)
-- [What's Next](#whats-next)
+- [Roadmap](#roadmap)
 - [License](#license)
 
 ---
@@ -46,7 +49,7 @@ AUDIT_SIGNING_KEY=$(openssl rand -hex 32) docker compose up -d
 http://localhost:3000
 ```
 
-Three tabs: **Audit** (event trail), **Incidents** (real-time detection), **Policies** (OPA versioning).
+Five tabs: **Audit**, **Incidents**, **Policies**, **Reports**, and **Gemini**.
 
 ### 3. Record your first audit step
 
@@ -57,7 +60,7 @@ curl -X POST http://localhost:9001/audit/step \
     "session_id":"demo","agent_id":"test","agent_type":"coder",
     "step_number":1,"tool_name":"read_file",
     "tool_input":{"path":"/tmp/test"},"tool_output":{"lines":10},
-    "timestamp":"2026-07-11T12:00:00Z"
+    "timestamp":"2026-07-12T12:00:00Z"
   }'
 # → {"status":"recorded","signature":"<ed25519>","policy_decision":{"allowed":true,"denials":[]}}
 ```
@@ -75,7 +78,6 @@ async def read_file(path: str) -> dict:
 
 async with client:
     result = await read_file(path="/tmp/x")
-    # → POST /audit/step sent automatically with Ed25519 signature
     events = await client.query_events(limit=10)
     incidents = await client.get_incidents()
 ```
@@ -84,7 +86,7 @@ async with client:
 
 ## What Tracepath Does
 
-Tracepath sits between your AI agent and the tools it calls. Every tool invocation is intercepted, signed, checked against policy, and stored in an immutable audit trail. A real-time incident detector watches for anomalies — denial spikes, budget overruns, suspicious patterns, and rate limit breaches — and surfaces them in a dashboard.
+Tracepath sits between your AI agent and the tools it calls. Every tool invocation is intercepted, signed, checked against policy, and stored in an immutable audit trail. A real-time incident detector watches for anomalies — denial spikes, budget overruns, suspicious patterns, and rate limit breaches — and surfaces them in a dashboard. An optional Gemini classifier refines severity using semantic analysis.
 
 | Capability | How it works |
 |---|---|
@@ -92,7 +94,9 @@ Tracepath sits between your AI agent and the tools it calls. Every tool invocati
 | **Enforce policy** | OPA WASM engine evaluates allowlists, budgets, rate limits in <1ms |
 | **Immutable audit log** | PostgreSQL (queryable) + MinIO S3 Object Lock (WORM, 365-day retention) |
 | **Detect incidents** | NATS JetStream → real-time detector → dashboard alerts |
+| **Classify severity** | Gemini 2.5 Flash via OpenRouter → semantic refinement of threshold-based alerts |
 | **Version policies** | Git-based policy versioning with diff, rollback, and replay |
+| **Generate reports** | One-click FINRA Rule 4511 and EU AI Act Article 50 compliance reports |
 | **Multi-SDK** | Python (async + sync, `@audit` decorator), TypeScript, Java |
 
 ---
@@ -116,7 +120,9 @@ Tracepath sits between your AI agent and the tools it calls. Every tool invocati
 │     │                                      ├─ Denial spike│
 │     │                                      ├─ Budget      │
 │     │                                      ├─ Suspicious  │
-│     │                                      └─ Rate limit  │
+│     │                                      ├─ Rate limit  │
+│     │                                      └─ Gemini 2.5  │
+│     │                                         (semantic)  │
 │     │                                                    │
 │     ├─ Proxy ─────────────────────────► Policy API (:9003)│
 │     │                                      ├─ Versions   │
@@ -126,68 +132,33 @@ Tracepath sits between your AI agent and the tools it calls. Every tool invocati
 │     └─ API ───────────────────────────► Dashboard (:3000)│
 │                                            ├─ Audit trail│
 │                                            ├─ Incidents  │
-│                                            └─ Policies   │
+│                                            ├─ Policies   │
+│                                            ├─ Reports    │
+│                                            └─ Gemini     │
 └─────────────────────────────────────────────────────────┘
 ```
 
----
-
-## Phase 1 — Foundation (MVP)
-
-All four building blocks of auditable AI.
-
-| Feature | Status |
-|---|---|
-| Ed25519 signing per event | ✅ |
-| OPA WASM policy engine (allowlist, budget, rate limit) | ✅ |
-| PostgreSQL audit log with query API | ✅ |
-| WORM storage (MinIO S3 Object Lock, 365-day retention) | ✅ |
-| Python SDK (async + sync, typed, `@audit` decorator) | ✅ |
-| TypeScript SDK (typed, native fetch) | ✅ |
-| Java SDK (java.net.http, Gson) | ✅ |
-| Docker Compose (gateway + postgres + nats + minio + dashboard) | ✅ |
+> ![Architecture Diagram](docs/screenshots/architecture.png)
+> *Replace with a visual diagram — use [Excalidraw](https://excalidraw.com) or similar.*
 
 ---
 
-## Phase 2 — Incident Response
+## Dashboard
 
-Real-time anomaly detection with NATS JetStream streaming.
+![Tracepath Dashboard — Gemini tab](docs/screenshots/dashboard-gemini-classification.png)
+*Gemini tab showing Enabled status, model info, and cached semantic classifications.*
 
-| Detector | Trigger | Severity |
-|---|---|---|
-| **Denial spike** | >5 policy denials in a single session | CRITICAL |
-| **Budget exceeded** | >1000 cost cents accumulated per session | WARNING |
-| **Suspicious pattern** | ≥10 consecutive calls to the same tool | WARNING |
-| **Rate limit breach** | >60 calls/minute per session | WARNING |
+![Tracepath Dashboard — Incidents tab](docs/screenshots/dashboard-incidents.png)
+*Incidents tab with real-time detection timeline: CRITICAL denial spikes, WARNING budget overruns.*
 
-![Incidents Dashboard — Rate Limit Breach](docs/screenshots/incidents-rate-limit.png)
+![Tracepath Dashboard — Policies tab](docs/screenshots/dashboard-policies.png)
+*Policies tab with git version history, side-by-side diff viewer, and one-click rollback.*
 
-### Detection pipeline
+![Tracepath Dashboard — Reports tab](docs/screenshots/dashboard-reports.png)
+*Reports tab with one-click FINRA and EU AI Act compliance report generation.*
 
-```
-Audit event → Gateway → NATS JetStream → Incident Detector (Python)
-                                              │
-                                              ├─ Threshold pass (Rego-like rules)
-                                              ├─ Gemini refinement (optional semantic pass)
-                                              └─ Incident persisted → Dashboard API
-```
-
----
-
-## Phase 3 — Policy Evolution
-
-Git-based policy lifecycle management — version, diff, rollback, and replay.
-
-![Policy Version History](docs/screenshots/policies-version-history.png)
-
-| Feature | Description |
-|---|---|
-| **Version history** | Every policy change is a git commit with author, message, and changed files |
-| **Visual diff** | Side-by-side unified diff with color-coded additions/deletions |
-| **Rollback** | One-click restore to any previous policy version |
-| **Replay engine** | Replay historical audit events against a selected policy version to answer: *"What would have happened if this policy was active then?"* |
-| **HTTP API** | `GET /versions`, `GET /diff`, `GET /content`, `POST /rollback` |
-| **CLI** | `python3 -m policy_engine.cli versions|diff|rollback|replay` |
+![Tracepath Dashboard — Audit tab](docs/screenshots/dashboard-audit.png)
+*Audit tab with event trail, policy decision breakdown, and tool usage stats.*
 
 ---
 
@@ -200,9 +171,12 @@ Git-based policy lifecycle management — version, diff, rollback, and replay.
 | `POST` | `/audit/step` | Record an audit step (signed + policy-checked) |
 | `GET` | `/audit/events` | Query audit events (filtered: `session_id`, `agent_id`, `tool_name`; paginated) |
 | `GET` | `/incidents` | Query incidents detected by the incident service |
+| `GET` | `/reports` | List generated compliance reports |
+| `POST` | `/reports/generate` | Generate a compliance report (`type: "finra" \| "eu-ai-act"`) |
+| `GET` | `/reports/{name}` | Download a specific report file |
+| `GET` | `/gemini` | Gemini classifier status and cached classifications |
 | `GET` | `/policies/versions` | List policy versions (git history) |
 | `GET` | `/policies/diff?old=<hash>&new=<hash>` | Unified diff between two policy versions |
-| `GET` | `/policies/content?hash=<hash>&file=<name>` | Get policy file content at a specific version |
 | `POST` | `/policies/rollback` | Rollback to a previous policy version |
 
 ---
@@ -284,6 +258,75 @@ opa build -t wasm -e tracepath/main/decision -o bundle.tar.gz rules/
 
 ---
 
+## Incident Detection
+
+Real-time anomaly detection with NATS JetStream streaming.
+
+| Detector | Trigger | Severity |
+|---|---|---|
+| **Denial spike** | >5 policy denials in a single session | CRITICAL |
+| **Budget exceeded** | >1000 cost cents accumulated per session | WARNING |
+| **Suspicious pattern** | ≥10 consecutive calls to the same tool | WARNING |
+| **Rate limit breach** | >60 calls/minute per session | WARNING |
+
+### Detection pipeline
+
+```
+Audit event → Gateway → NATS JetStream → Incident Detector (Python)
+                                              │
+                                              ├─ Threshold pass (Rego-like rules)
+                                              ├─ Gemini refinement (semantic pass)
+                                              └─ Incident persisted → Dashboard API
+```
+
+---
+
+## Gemini Semantic Classifier
+
+Powered by **Google Gemini 2.5 Flash** via OpenRouter. Takes threshold-triggered incidents and refines their severity by analyzing the semantic context.
+
+| Incident | Original Severity | Gemini Reasoning | Final Severity |
+|---|---|---|
+| 6 `image_generate` denials in a session | CRITICAL | *"All denials were for image generation, suggesting a misconfiguration rather than a malicious attempt"* | WARNING |
+| Budget exceeded by 2x | WARNING | *"The tools used match a legitimate research workflow"* | INFO |
+
+### Backend support
+
+- **OpenRouter** — set `OPENROUTER_API_KEY` (recommended)
+- **Google AI native** — set `GOOGLE_API_KEY`
+
+```bash
+# With OpenRouter
+OPENROUTER_API_KEY=sk-or-v1-... docker compose up -d
+
+# Or set the model explicitly
+OPENROUTER_MODEL=google/gemini-2.5-flash docker compose up -d
+```
+
+### Persistent cache
+
+All Gemini classifications are cached to disk (`/data/gemini-cache.json`) and survive container restarts. The dashboard shows the classification history with reasoning for every incident.
+
+---
+
+## Compliance Reports
+
+One-click generation of regulatory reports, directly from the dashboard.
+
+| Report | Standard | Status |
+|---|---|---|
+| **FINRA** | Rule 4511 (Books and Records) | ✅ Compliant |
+| **EU AI Act** | Article 50 (Transparency & Oversight) | ✅ Compliant |
+
+Each report validates:
+- **Data Integrity** — Ed25519 signatures on every event
+- **Record Retention** — WORM storage with 365-day minimum
+- **Access Controls** — API-level authentication
+- **Searchable Records** — Full PostgreSQL query capability
+- **Human Oversight** — Dashboard-based monitoring and intervention
+
+---
+
 ## Observability
 
 The gateway exports traces to **LangFuse** via OTLP (HTTP). Disabled by default — enable with:
@@ -299,19 +342,53 @@ When unset, the gateway logs to stdout (JSON) with zero OTLP overhead.
 
 ---
 
-## What's Next
+## Roadmap
 
-| Item | Status |
-|---|---|
-| Rollback short-hash bug | 🔧 Fix committed, needs Docker rebuild |
-| Replay engine end-to-end | 📋 Code complete, needs DB connection test |
-| Gemini semantic classifier | 📋 Code complete, needs `GOOGLE_API_KEY` |
-| FINRA + EU AI Act PDF reports | 📋 Code complete, needs CLI trigger test |
-| TypeScript SDK parity | 📋 Port `@audit` decorator + `query_events` + `get_incidents` |
-| Helm chart (Phase 4) | 📋 Kubernetes deployment |
+### Now (Weekend Build — complete ✅)
+
+- [x] Ed25519 signing per event
+- [x] OPA WASM policy engine (allowlist, budget, rate limit)
+- [x] PostgreSQL audit log with query API
+- [x] WORM storage (MinIO S3 Object Lock)
+- [x] NATS JetStream event bus
+- [x] Real-time incident detection (4 detectors)
+- [x] Git-based policy versioning (diff + rollback + replay)
+- [x] FINRA + EU AI Act compliance reports
+- [x] Gemini 2.5 Flash semantic classifier (via OpenRouter)
+- [x] React dashboard (5 tabs)
+- [x] Python SDK (async + sync, `@audit` decorator)
+- [x] TypeScript SDK
+- [x] Java SDK
+
+### Next (weeks 1–4)
+
+- [ ] **Helm chart** — deploy to any Kubernetes cluster
+- [ ] **PDF reports** — FINRA/EU AI Act as downloadable PDFs
+- [ ] **Webhook alerts** — Slack, Discord, PagerDuty for critical incidents
+- [ ] **Custom policy UI** — write and test Rego rules directly in the dashboard
+- [ ] **TypeScript SDK parity** — `@audit` decorator + full feature parity with Python SDK
+
+### Soon (months 1–3)
+
+- [ ] **SOC2 readiness package** — pre-built evidence collection for SOC2 auditors
+- [ ] **AWS Marketplace listing** — one-click deploy from AWS console
+- [ ] **Multi-tenant dashboard** — organization-level scoping and RBAC
+- [ ] **Replay engine end-to-end** — full historical replay with comparison reports
+- [ ] **LangFuse integration** — native OpenTelemetry export with pre-built dashboards
+
+### Vision (6+ months)
+
+- [ ] **Policy marketplace** — share and import community OPA policies
+- [ ] **Federated audit** — cross-organization audit trail sharing with zero-knowledge proofs
+- [ ] **Agent scoring** — compliance score per agent/session, visible in dashboard
+- [ ] **Real-time intervention** — auto-pause agents when critical incidents are detected
 
 ---
 
 ## License
 
 Apache 2.0
+
+---
+
+*Built with ❤️‍🔥 by [Nadia Ujovich](https://github.com/nujovich)*
