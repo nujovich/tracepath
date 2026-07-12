@@ -610,6 +610,138 @@ function PoliciesTab() {
   );
 }
 
+// ── Reports Tab ──
+
+interface ReportFile {
+  name: string;
+  size: number;
+  modified: string;
+}
+
+function ReportsTab() {
+  const [reports, setReports] = useState<ReportFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchReports = async () => {
+    try {
+      const res = await fetch("/api/reports");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setReports(data.reports || []);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fetch reports");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchReports(); }, []);
+
+  const generateReport = async (type: string) => {
+    setGenerating(type);
+    try {
+      const res = await fetch("/api/reports/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await fetchReports();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Generation failed");
+    } finally {
+      setGenerating(null);
+    }
+  };
+
+  const viewReport = (name: string) => {
+    window.open(`/api/reports/${name}`, "_blank");
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex gap-3">
+        <button
+          onClick={() => generateReport("finra")}
+          disabled={generating !== null}
+          className="px-4 py-2 text-sm bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded text-white"
+        >
+          {generating === "finra" ? "Generating..." : "Generate FINRA Report"}
+        </button>
+        <button
+          onClick={() => generateReport("eu-ai-act")}
+          disabled={generating !== null}
+          className="px-4 py-2 text-sm bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded text-white"
+        >
+          {generating === "eu-ai-act" ? "Generating..." : "Generate EU AI Act Report"}
+        </button>
+        <button
+          onClick={fetchReports}
+          className="px-3 py-2 text-xs bg-gray-800 hover:bg-gray-700 rounded text-gray-400"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="p-4 text-sm text-red-400 bg-red-950/30 rounded border border-red-800">
+          {error}
+        </div>
+      )}
+
+      <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-800">
+          <h2 className="text-sm font-semibold text-gray-400">
+            Generated Reports
+          </h2>
+        </div>
+        {loading ? (
+          <div className="p-8 text-center text-gray-500">Loading...</div>
+        ) : reports.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            No reports yet. Click a button above to generate.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase">
+                  <th className="px-4 py-2">Report</th>
+                  <th className="px-4 py-2">Size</th>
+                  <th className="px-4 py-2">Generated</th>
+                  <th className="px-4 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map((r) => (
+                  <tr key={r.name} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                    <td className="px-4 py-2 text-xs text-gray-300">{r.name}</td>
+                    <td className="px-4 py-2 text-xs text-gray-500">{(r.size / 1024).toFixed(1)} KB</td>
+                    <td className="px-4 py-2 text-xs text-gray-500">
+                      {new Date(r.modified).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2">
+                      <button
+                        onClick={() => viewReport(r.name)}
+                        className="px-2 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded text-purple-400"
+                      >
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── App ──
 
 export default function App() {
@@ -629,11 +761,11 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto p-6">
         <TabBar
-          tabs={["Audit", "Incidents", "Policies"]}
+          tabs={["Audit", "Incidents", "Policies", "Reports"]}
           active={tab}
           onChange={setTab}
         />
-        {tab === "Audit" ? <AuditTab /> : tab === "Incidents" ? <IncidentsTab /> : <PoliciesTab />}
+        {tab === "Audit" ? <AuditTab /> : tab === "Incidents" ? <IncidentsTab /> : tab === "Policies" ? <PoliciesTab /> : <ReportsTab />}
       </main>
     </div>
   );

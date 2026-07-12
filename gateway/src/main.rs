@@ -525,6 +525,57 @@ async fn proxy_incidents(req: HttpRequest) -> HttpResponse {
     }
 }
 
+async fn proxy_reports(req: HttpRequest, body: web::Bytes) -> HttpResponse {
+    let client = Client::new();
+    let path = req.path();
+    let qs = req.query_string();
+
+    let target_path = if path == "/reports/generate" {
+        "http://incident:9004/api/reports/generate"
+    } else {
+        // /reports → list, /reports/{name} → serve file
+        let rest = path.strip_prefix("/reports").unwrap_or("");
+        let rest = rest.strip_prefix('/').unwrap_or(rest);
+        if rest.is_empty() {
+            "http://incident:9004/api/reports"
+        } else {
+            // URL-encode the filename segment
+            &format!("http://incident:9004/api/reports/{}", rest)
+        }
+    };
+
+    let target_url = if qs.is_empty() {
+        target_path.to_string()
+    } else {
+        format!("{}?{}", target_path, qs)
+    };
+
+    let result = match req.method().as_str() {
+        "GET" => client.get(&target_url).send().await,
+        "POST" => client.post(&target_url).send_body(body.to_vec()).await,
+        _ => {
+            return HttpResponse::MethodNotAllowed().json(serde_json::json!({
+                "error": "method not allowed"
+            }))
+        }
+    };
+
+    match result {
+        Ok(mut res) => {
+            let resp_body = res.body().await.unwrap_or_default();
+            let ct = res
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/json");
+            HttpResponse::Ok().content_type(ct).body(resp_body)
+        }
+        Err(_) => HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "error": "incident service unavailable"
+        })),
+    }
+}
+
 async fn proxy_policies(req: HttpRequest, body: web::Bytes) -> HttpResponse {
     let client = Client::new();
     let path = req.path();
@@ -670,6 +721,8 @@ async fn main() -> std::io::Result<()> {
             .route("/audit/step", web::post().to(audit_step))
             .route("/audit/events", web::get().to(query_events))
             .route("/incidents", web::get().to(proxy_incidents))
+            .route("/reports", web::get().to(proxy_reports))
+            .route("/reports/generate", web::post().to(proxy_reports))
             .route("/policies/{tail:.*}", web::route().to(proxy_policies))
     })
     .bind(format!("{}:{}", host, port))?

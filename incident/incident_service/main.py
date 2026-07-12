@@ -87,6 +87,65 @@ async def handle_health(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "service": "tracepath-incident"})
 
 
+async def handle_reports(request: web.Request) -> web.Response:
+    """GET /api/reports — list generated report files."""
+    import glob
+    reports_dir = "/data"
+    files = sorted(glob.glob(f"{reports_dir}/*-report.html"), reverse=True)
+    result = []
+    for f in files:
+        name = os.path.basename(f)
+        stat = os.stat(f)
+        result.append({
+            "name": name,
+            "size": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        })
+    return web.json_response({"reports": result, "total": len(result)})
+
+
+async def handle_report_file(request: web.Request) -> web.Response:
+    """GET /api/reports/{name} — serve a specific report file."""
+    name = request.match_info.get("name", "")
+    path = os.path.join("/data", os.path.basename(name))
+    if not os.path.isfile(path):
+        return web.json_response({"error": "not found"}, status=404)
+    return web.FileResponse(path)
+
+
+async def handle_report_generate(request: web.Request) -> web.Response:
+    """POST /api/reports/generate — generate a compliance report."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    report_type = body.get("type", "finra")
+    if report_type not in ("finra", "eu-ai-act"):
+        return web.json_response({"error": "invalid type"}, status=400)
+
+    import asyncpg
+    from .reports import ReportGenerator
+
+    db_url = os.environ.get("DATABASE_URL", "postgres://tracepath:tracepath@localhost:5432/tracepath")
+    pool = await asyncpg.create_pool(db_url)
+    try:
+        gen = ReportGenerator(pool)
+        if report_type == "finra":
+            report = await gen.generate_finra_report()
+            filename = "finra-report.html"
+        else:
+            report = await gen.generate_eu_ai_act_report()
+            filename = "eu-ai-act-report.html"
+
+        html = gen.to_html(report)
+        outpath = os.path.join("/data", filename)
+        with open(outpath, "w") as f:
+            f.write(html)
+        return web.json_response({"ok": True, "file": filename, "events": report.total_events})
+    finally:
+        await pool.close()
+
+
 # ── NATS consumer ──
 
 async def ensure_stream(js):
@@ -184,6 +243,9 @@ async def main():
     app = web.Application()
     app.router.add_get("/api/incidents", handle_incidents)
     app.router.add_get("/health", handle_health)
+    app.router.add_get("/api/reports", handle_reports)
+    app.router.add_get("/api/reports/{name}", handle_report_file)
+    app.router.add_post("/api/reports/generate", handle_report_generate)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", http_port)
