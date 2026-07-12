@@ -742,6 +742,117 @@ function ReportsTab() {
   );
 }
 
+// ── Gemini Tab ──
+
+interface GeminiStatus {
+  enabled: boolean;
+  model?: string;
+  reason?: string;
+  cache_size?: number;
+  cache_entries?: { key: string; severity: string; reasoning: string }[];
+}
+
+function GeminiTab() {
+  const [status, setStatus] = useState<GeminiStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch("/api/gemini");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setStatus(data);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchStatus(); }, []);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div className="text-xs text-gray-500 uppercase tracking-wide">Status</div>
+          <div className={`text-lg font-bold mt-1 ${status?.enabled ? "text-emerald-400" : "text-amber-400"}`}>
+            {loading ? "..." : status?.enabled ? "✅ Enabled" : "⚠️ Disabled"}
+          </div>
+        </div>
+        <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div className="text-xs text-gray-500 uppercase tracking-wide">Model</div>
+          <div className="text-lg font-bold mt-1 text-gray-100">
+            {status?.model || "—"}
+          </div>
+        </div>
+      </div>
+
+      {status?.reason && (
+        <div className="p-3 text-sm text-amber-400 bg-amber-950/30 rounded border border-amber-800">
+          {status.reason}
+        </div>
+      )}
+
+      {status?.enabled && (
+        <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
+            <h2 className="text-sm font-semibold text-gray-400">
+              Recent Classifications ({status.cache_size || 0} cached)
+            </h2>
+            <button onClick={fetchStatus} className="px-3 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded text-gray-400">
+              Refresh
+            </button>
+          </div>
+          {status.cache_entries && status.cache_entries.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase">
+                    <th className="px-4 py-2">Incident</th>
+                    <th className="px-4 py-2">Severity</th>
+                    <th className="px-4 py-2">Reasoning</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...(status.cache_entries || [])].reverse().map((e, i) => (
+                    <tr key={i} className="border-b border-gray-800/50">
+                      <td className="px-4 py-2 font-mono text-xs text-gray-400">{e.key}</td>
+                      <td className="px-4 py-2">
+                        <span className={`text-xs px-2 py-0.5 rounded border ${
+                          e.severity === "critical" ? "text-red-400 bg-red-950/50 border-red-800" :
+                          e.severity === "warning" ? "text-amber-400 bg-amber-950/50 border-amber-800" :
+                          e.severity === "false_positive" ? "text-gray-400 bg-gray-800 border-gray-700" :
+                          "text-blue-400 bg-blue-950/50 border-blue-800"
+                        }`}>
+                          {e.severity}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-xs text-gray-300">{e.reasoning}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="p-8 text-center text-gray-500">
+              No classifications yet. Trigger some incidents to see Gemini refine severity.
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div className="p-4 text-sm text-red-400 bg-red-950/30 rounded border border-red-800">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── App ──
 
 export default function App() {
@@ -761,11 +872,11 @@ export default function App() {
 
       <main className="max-w-6xl mx-auto p-6">
         <TabBar
-          tabs={["Audit", "Incidents", "Policies", "Reports"]}
+          tabs={["Audit", "Incidents", "Policies", "Reports", "Gemini"]}
           active={tab}
           onChange={setTab}
         />
-        {tab === "Audit" ? <AuditTab /> : tab === "Incidents" ? <IncidentsTab /> : tab === "Policies" ? <PoliciesTab /> : <ReportsTab />}
+        {tab === "Audit" ? <AuditTab /> : tab === "Incidents" ? <IncidentsTab /> : tab === "Policies" ? <PoliciesTab /> : tab === "Reports" ? <ReportsTab /> : <GeminiTab />}
       </main>
     </div>
   );

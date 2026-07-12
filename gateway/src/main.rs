@@ -576,6 +576,26 @@ async fn proxy_reports(req: HttpRequest, body: web::Bytes) -> HttpResponse {
     }
 }
 
+async fn proxy_gemini(req: HttpRequest) -> HttpResponse {
+    let client = Client::new();
+    let qs = req.query_string();
+    let url = if qs.is_empty() {
+        "http://incident:9004/api/gemini/status".to_string()
+    } else {
+        format!("http://incident:9004/api/gemini/status?{}", qs)
+    };
+
+    match client.get(&url).send().await {
+        Ok(mut res) => {
+            let body = res.body().await.unwrap_or_default();
+            HttpResponse::Ok().content_type("application/json").body(body)
+        }
+        Err(_) => HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "error": "incident service unavailable"
+        })),
+    }
+}
+
 async fn proxy_policies(req: HttpRequest, body: web::Bytes) -> HttpResponse {
     let client = Client::new();
     let path = req.path();
@@ -723,6 +743,7 @@ async fn main() -> std::io::Result<()> {
             .route("/incidents", web::get().to(proxy_incidents))
             .route("/reports", web::get().to(proxy_reports))
             .route("/reports/generate", web::post().to(proxy_reports))
+            .route("/gemini", web::get().to(proxy_gemini))
             .route("/policies/{tail:.*}", web::route().to(proxy_policies))
     })
     .bind(format!("{}:{}", host, port))?

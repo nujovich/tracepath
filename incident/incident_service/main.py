@@ -32,6 +32,9 @@ SUBJECT = "audit.events.>"
 DURABLE_NAME = "incident-service"
 INCIDENTS_FILE = os.environ.get("INCIDENTS_FILE", "/data/incidents.jsonl")
 
+# ── Module-level Gemini reference (set in main) ──
+_gemini: "GeminiClassifier | None" = None
+
 # ── In-memory incident cache ──
 _incidents: list[dict] = []
 _MAX_INCIDENTS = 1000
@@ -85,6 +88,23 @@ async def handle_incidents(request: web.Request) -> web.Response:
 
 async def handle_health(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "service": "tracepath-incident"})
+
+
+async def handle_gemini_status(request: web.Request) -> web.Response:
+    """GET /api/gemini/status — Gemini classifier status and recent reclassifications."""
+    gemini = _gemini
+    if gemini is None:
+        return web.json_response({"enabled": False, "reason": "not initialized"})
+
+    return web.json_response({
+        "enabled": gemini._enabled,
+        "model": gemini._model,
+        "cache_size": len(gemini._cache),
+        "cache_entries": [
+            {"key": k, "severity": v["severity"], "reasoning": v["reasoning"]}
+            for k, v in list(gemini._cache.items())[-20:]
+        ],
+    })
 
 
 async def handle_reports(request: web.Request) -> web.Response:
@@ -238,6 +258,8 @@ async def main():
 
     gemini = GeminiClassifier()
     detector = Detector(gemini=gemini)
+    global _gemini
+    _gemini = gemini
 
     # Start HTTP server
     app = web.Application()
@@ -246,6 +268,7 @@ async def main():
     app.router.add_get("/api/reports", handle_reports)
     app.router.add_get("/api/reports/{name}", handle_report_file)
     app.router.add_post("/api/reports/generate", handle_report_generate)
+    app.router.add_get("/api/gemini/status", handle_gemini_status)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", http_port)
