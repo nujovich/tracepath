@@ -69,7 +69,7 @@ class GeminiClassifier:
     def _setup_openrouter(self, api_key: str) -> None:
         self._backend = "openrouter"
         self._model = os.environ.get(
-            "OPENROUTER_MODEL", "google/gemini-flash-latest"
+            "OPENROUTER_MODEL", "google/gemini-2.5-flash"
         )
         self._client = httpx.AsyncClient(
             base_url="https://openrouter.ai/api/v1/",
