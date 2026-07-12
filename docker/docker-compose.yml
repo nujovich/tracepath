@@ -37,11 +37,14 @@ services:
       - "9004:9004"
     environment:
       - NATS_URL=nats://nats:4222
+      - DATABASE_URL=postgres://tracepath:***@postgres:5432/tracepath
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
     volumes:
       - incidentdata:/data
     depends_on:
       nats:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
