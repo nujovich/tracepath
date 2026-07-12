@@ -37,7 +37,7 @@ services:
       - "9004:9004"
     environment:
       - NATS_URL=nats://nats:4222
-      - DATABASE_URL=postgres://tracepath:***@postgres:5432/tracepath
+      - DATABASE_URL=postgres://tracepath:tracepath@postgres:5432/tracepath
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
     volumes:
       - incidentdata:/data
