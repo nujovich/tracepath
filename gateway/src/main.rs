@@ -743,6 +743,7 @@ async fn main() -> std::io::Result<()> {
             .route("/incidents", web::get().to(proxy_incidents))
             .route("/reports", web::get().to(proxy_reports))
             .route("/reports/generate", web::post().to(proxy_reports))
+            .route("/reports/{tail:.*}", web::get().to(proxy_reports))
             .route("/gemini", web::get().to(proxy_gemini))
             .route("/policies/{tail:.*}", web::route().to(proxy_policies))
     })
