@@ -130,6 +130,7 @@ class GeminiClassifier:
 
     async def refine(self, incident: Incident, session_summary: str) -> Incident:
         """Refine an incident's severity. Returns the (possibly modified) incident."""
+        logger.info("Gemini refine called: enabled=%s type=%s session=%s", self._enabled, incident.incident_type.value, incident.session_id)
         if not self._enabled:
             return incident
 
