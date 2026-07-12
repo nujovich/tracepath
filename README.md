@@ -103,61 +103,25 @@ Tracepath sits between your AI agent and the tools it calls. Every tool invocati
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Agent (LangChain / CrewAI / custom)                     │
-│     │                                                    │
-│     ▼                                                    │
-│  Tracepath SDK (Python / TypeScript / Java)              │
-│     │                                                    │
-│     ▼                                                    │
-│  Audit Gateway (Rust + actix-web, :9001)                 │
-│     ├─ Ed25519 signing ───────────────► PostgreSQL       │
-│     ├─ OPA WASM policy engine ────────► allow / deny     │
-│     ├─ Allowed events ────────────────► MinIO S3 (WORM)  │
-│     │                                                    │
-│     ├─ NATS JetStream ────────────────► Incident Detector│
-│     │                                      ├─ Denial spike│
-│     │                                      ├─ Budget      │
-│     │                                      ├─ Suspicious  │
-│     │                                      ├─ Rate limit  │
-│     │                                      └─ Gemini 2.5  │
-│     │                                         (semantic)  │
-│     │                                                    │
-│     ├─ Proxy ─────────────────────────► Policy API (:9003)│
-│     │                                      ├─ Versions   │
-│     │                                      ├─ Diff       │
-│     │                                      └─ Rollback   │
-│     │                                                    │
-│     └─ API ───────────────────────────► Dashboard (:3000)│
-│                                            ├─ Audit trail│
-│                                            ├─ Incidents  │
-│                                            ├─ Policies   │
-│                                            ├─ Reports    │
-│                                            └─ Gemini     │
-└─────────────────────────────────────────────────────────┘
-```
-
-> ![Architecture Diagram](docs/screenshots/architecture.png)
-> *Replace with a visual diagram — use [Excalidraw](https://excalidraw.com) or similar.*
+![alt text](image-5.png)
 
 ---
 
 ## Dashboard
 
-![Tracepath Dashboard — Gemini tab](docs/screenshots/dashboard-gemini-classification.png)
+![Tracepath Dashboard — Gemini tab](![alt text](image-4.png))
 *Gemini tab showing Enabled status, model info, and cached semantic classifications.*
 
-![Tracepath Dashboard — Incidents tab](docs/screenshots/dashboard-incidents.png)
+![Tracepath Dashboard — Incidents tab](![alt text](image.png))
 *Incidents tab with real-time detection timeline: CRITICAL denial spikes, WARNING budget overruns.*
 
-![Tracepath Dashboard — Policies tab](docs/screenshots/dashboard-policies.png)
+![Tracepath Dashboard — Policies tab](![alt text](image-1.png))
 *Policies tab with git version history, side-by-side diff viewer, and one-click rollback.*
 
-![Tracepath Dashboard — Reports tab](docs/screenshots/dashboard-reports.png)
+![Tracepath Dashboard — Reports tab](![alt text](image-2.png))
 *Reports tab with one-click FINRA and EU AI Act compliance report generation.*
 
-![Tracepath Dashboard — Audit tab](docs/screenshots/dashboard-audit.png)
+![Tracepath Dashboard — Audit tab](![alt text](image-3.png))
 *Audit tab with event trail, policy decision breakdown, and tool usage stats.*
 
 ---
