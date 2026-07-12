@@ -45,6 +45,12 @@ So I built it. In one weekend. Because that's what passion does — it makes you
 
 ## Demo
 
+### Watch the 1-minute walkthrough
+
+{% embed https://www.youtube.com/watch?v=YOUR_VIDEO_ID %}
+
+*Quick tour of all five dashboard tabs: Audit, Incidents, Policies, Reports, and Gemini.*
+
 ### One command to start
 
 ```bash
@@ -53,19 +59,15 @@ cd tracepath/docker
 AUDIT_SIGNING_KEY=$(openssl rand -hex 32) docker compose up -d
 ```
 
-### Dashboard at `http://localhost:3000`
+Then open `http://localhost:3000`. You'll see:
 
-![Tracepath Dashboard — Audit Trail](https://raw.githubusercontent.com/nujovich/tracepath/main/docs/screenshots/dashboard-audit.png)
-*Every tool call is signed, policy-checked, and stored in PostgreSQL + MinIO WORM storage.*
-
-![Tracepath Dashboard — Incidents](https://raw.githubusercontent.com/nujovich/tracepath/main/docs/screenshots/dashboard-incidents.png)
-*Real-time incident detection: denial spikes, budget overruns, suspicious patterns, rate limit breaches.*
-
-![Tracepath Dashboard — Policies](https://raw.githubusercontent.com/nujovich/tracepath/main/docs/screenshots/dashboard-policies.png)
-*Git-based policy versioning with visual diff and one-click rollback.*
-
-![Tracepath Dashboard — Reports](https://raw.githubusercontent.com/nujovich/tracepath/main/docs/screenshots/dashboard-reports.png)
-*One-click FINRA and EU AI Act compliance reports.*
+| Tab | What it shows |
+|---|---|
+| **Audit** | Every tool call signed, policy-checked, stored in PostgreSQL + MinIO WORM |
+| **Incidents** | Real-time detection: denial spikes, budget overruns, suspicious patterns, rate limit breaches |
+| **Policies** | Git-based OPA versioning with visual diff and one-click rollback |
+| **Reports** | One-click FINRA and EU AI Act compliance reports |
+| **Gemini** | Google Gemini 2.5 Flash classifying incidents — "this is a misconfiguration, not an attack" |
 
 ### What happens when you send audit events
 
