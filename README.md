@@ -109,19 +109,19 @@ Tracepath sits between your AI agent and the tools it calls. Every tool invocati
 
 ## Dashboard
 
-![Tracepath Dashboard — Gemini tab](![alt text](image-4.png))
+![Tracepath Dashboard — Gemini tab](image-4.png)
 *Gemini tab showing Enabled status, model info, and cached semantic classifications.*
 
-![Tracepath Dashboard — Incidents tab](![alt text](image.png))
+![Tracepath Dashboard — Incidents tab](image.png)
 *Incidents tab with real-time detection timeline: CRITICAL denial spikes, WARNING budget overruns.*
 
-![Tracepath Dashboard — Policies tab](![alt text](image-1.png))
+![Tracepath Dashboard — Policies tab](image-1.png)
 *Policies tab with git version history, side-by-side diff viewer, and one-click rollback.*
 
-![Tracepath Dashboard — Reports tab](![alt text](image-2.png))
+![Tracepath Dashboard — Reports tab](image-2.png)
 *Reports tab with one-click FINRA and EU AI Act compliance report generation.*
 
-![Tracepath Dashboard — Audit tab](![alt text](image-3.png))
+![Tracepath Dashboard — Audit tab](image-3.png)
 *Audit tab with event trail, policy decision breakdown, and tool usage stats.*
 
 ---
