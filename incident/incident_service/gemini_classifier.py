@@ -124,6 +124,13 @@ class GeminiClassifier:
             logger.warning("Gemini classification failed (non-fatal): %s", e)
             incident.context["gemini_error"] = str(e)
 
+            # Cache the error too so the dashboard shows it
+            self._cache[cache_key] = {
+                "severity": "error",
+                "reasoning": f"Gemini API: {e}",
+            }
+            self._save_cache()
+
         return incident
 
     def build_session_summary(self, event_count: int, tool_counts: dict[str, int],
