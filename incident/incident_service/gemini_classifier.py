@@ -72,7 +72,7 @@ class GeminiClassifier:
             "OPENROUTER_MODEL", "google/gemini-2.0-flash-001"
         )
         self._client = httpx.AsyncClient(
-            base_url="https://openrouter.ai/api/v1",
+            base_url="https://openrouter.ai/api/v1/",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "HTTP-Referer": "https://tracepath.dev",
