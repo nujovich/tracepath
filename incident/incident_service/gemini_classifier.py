@@ -102,7 +102,7 @@ class GeminiClassifier:
         """Call Gemini via OpenRouter chat completions API."""
         assert self._client is not None
         resp = await self._client.post(
-            "/chat/completions",
+            "chat/completions",
             json={
                 "model": self._model,
                 "messages": [
