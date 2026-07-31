@@ -326,9 +326,9 @@ When unset, the gateway logs to stdout (JSON) with zero OTLP overhead.
 
 ### Next (weeks 1–4)
 
-- [ ] **Helm chart** — deploy to any Kubernetes cluster
+- [x] **Helm chart** — deploy to any Kubernetes cluster
 - [ ] **PDF reports** — FINRA/EU AI Act as downloadable PDFs
-- [ ] **Webhook alerts** — Slack, Discord, PagerDuty for critical incidents
+- [x] **Webhook alerts** — Slack, Discord, PagerDuty for critical incidents
 - [ ] **Custom policy UI** — write and test Rego rules directly in the dashboard
 - [ ] **TypeScript SDK parity** — `@audit` decorator + full feature parity with Python SDK
 
