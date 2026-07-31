@@ -130,6 +130,11 @@ incident:
   gemini:
     enabled: false
     apiKey: ""
+  webhooks:
+    slackUrl: ""
+    discordUrl: ""
+    pagerdutyRoutingKey: ""
+    dashboardUrl: ""
 
 # ── Policy API ──
 policies:

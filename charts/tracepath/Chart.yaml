@@ -19,3 +19,16 @@ sources:
 maintainers:
   - name: Tracepath Team
     email: tracepath@mermelada.tech
+dependencies:
+  - name: postgresql
+    version: "16.x"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: postgresql.enabled
+  - name: nats
+    version: "1.x"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: nats.enabled
+  - name: minio
+    version: "14.x"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: minio.enabled

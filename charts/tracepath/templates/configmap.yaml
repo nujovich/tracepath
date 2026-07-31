@@ -21,6 +21,13 @@ metadata:
     app.kubernetes.io/component: incident
 data:
   NATS_URL: "nats://{{ include "tracepath.fullname" . }}-nats:4222"
+  INCIDENT_DASHBOARD_URL: {{ .Values.incident.webhooks.dashboardUrl | default "http://tracepath-dashboard" | quote }}
+  {{- if .Values.incident.webhooks.slackUrl }}
+  SLACK_WEBHOOK_URL: {{ .Values.incident.webhooks.slackUrl | quote }}
+  {{- end }}
+  {{- if .Values.incident.webhooks.discordUrl }}
+  DISCORD_WEBHOOK_URL: {{ .Values.incident.webhooks.discordUrl | quote }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Secret
@@ -38,4 +45,16 @@ data:
   {{- if .Values.gateway.otel.enabled }}
   LANGFUSE_PUBLIC_KEY: {{ .Values.gateway.otel.langfusePublicKey | b64enc | quote }}
   LANGFUSE_SECRET_KEY: {{ .Values.gateway.otel.langfuseSecretKey | b64enc | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "tracepath.fullname" . }}-incident
+  labels:
+    {{- include "tracepath.labels" . | nindent 4 }}
+type: Opaque
+data:
+  {{- if .Values.incident.webhooks.pagerdutyRoutingKey }}
+  PAGERDUTY_ROUTING_KEY: {{ .Values.incident.webhooks.pagerdutyRoutingKey | b64enc | quote }}
   {{- end }}

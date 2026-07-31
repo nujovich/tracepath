@@ -30,6 +30,13 @@ spec:
         - name: GOOGLE_API_KEY
           value: {{ .Values.incident.gemini.apiKey | quote }}
         {{- end }}
+        {{- if .Values.incident.webhooks.pagerdutyRoutingKey }}
+        - name: PAGERDUTY_ROUTING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "tracepath.fullname" . }}-incident
+              key: PAGERDUTY_ROUTING_KEY
+        {{- end }}
         resources:
           {{- toYaml .Values.incident.resources | nindent 10 }}
 ---

@@ -214,6 +214,10 @@ async def process_event(detector: Detector, msg):
         logger.warning("INCIDENT|%s", payload)
         _persist_incident(incident_dict)
 
+        # Fire webhooks (non-blocking, best-effort)
+        from .webhooks import notify_all
+        asyncio.ensure_future(notify_all(incident))
+
 
 async def run_nats_consumer(nc, js, detector):
     """Run NATS pull consumer loop."""
