@@ -62,6 +62,16 @@ class PolicyHandler(BaseHTTPRequestHandler):
                 self._json({"success": ok, "hash": commit_hash})
             else:
                 self._json({"error": "missing hash"}, 400)
+        elif self.path == "/api/policies/commit":
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length > 0 else {}
+            author = body.get("author", "tracepath")
+            message = body.get("message", "policy update")
+            commit_hash = pv.commit_policy(author=author, message=message)
+            if commit_hash:
+                self._json({"success": True, "hash": commit_hash})
+            else:
+                self._json({"success": False, "error": "no changes to commit"})
         else:
             self._json({"error": "not found"}, 404)
 
