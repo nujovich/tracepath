@@ -7,6 +7,16 @@ agent_tools := {
     "coder": {"read_file", "write_file", "terminal", "search_files", "patch", "execute_code"},
     "researcher": {"web_search", "web_extract", "browser_navigate", "browser_snapshot"},
     "coordinator": {"delegate_task", "cronjob", "todo", "clarify"},
+    "assistant": {
+        "terminal", "write_file", "read_file", "search_files", "patch",
+        "web_search", "web_extract",
+        "browser_navigate", "browser_snapshot", "browser_click", "browser_vision",
+        "delegate_task", "execute_code",
+        "clarify", "memory", "session_search",
+        "skill_view", "skills_list", "skill_manage",
+        "tool_search", "tool_describe", "tool_call",
+        "image_generate",
+    },
     "default": {"read_file", "web_search", "web_extract"},
 }
 
