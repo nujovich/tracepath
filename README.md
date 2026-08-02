@@ -277,10 +277,22 @@ All Gemini classifications are cached to disk (`/data/gemini-cache.json`) and su
 
 One-click generation of regulatory reports, directly from the dashboard.
 
-| Report | Standard | Status |
+| Report | Standard | Effective | Status |
+|---|---|---|---|
+| **EU AI Act** | Article 50 — Transparency & Oversight | 2 Aug 2026 ✅ | Compliant |
+| **FINRA** | Rule 4511 (Books and Records) | Active | Compliant |
+
+### Regulatory timeline notes
+
+The Digital Omnibus on AI (adopted 29 June 2026) postponed high-risk AI system obligations under Annex III:
+
+| Article | Obligation | Original | **Current** |
 |---|---|---|
-| **FINRA** | Rule 4511 (Books and Records) | ✅ Compliant |
-| **EU AI Act** | Article 50 (Transparency & Oversight) | ✅ Compliant |
+| Art. 50 | Transparency (disclosure, deepfakes, AI-generated content) | 2 Aug 2026 | **2 Aug 2026** — in force |
+| Art. 12 | Record-Keeping (high-risk) | 2 Aug 2026 | **2 Dec 2027** |
+| Art. 17 | Quality Management System (high-risk) | 2 Aug 2026 | **2 Dec 2027** |
+
+Tracepath's current compliance reports cover Article 50 (transparency) and FINRA 4511. Article 12 and Article 17 report templates are on standby until the December 2027 deadline approaches.
 
 Each report validates:
 - **Data Integrity** — Ed25519 signatures on every event
@@ -327,8 +339,8 @@ When unset, the gateway logs to stdout (JSON) with zero OTLP overhead.
 ### Next (weeks 1–4)
 
 - [x] **Helm chart** — deploy to any Kubernetes cluster
-- [ ] **PDF reports** — FINRA/EU AI Act as downloadable PDFs
-- [x] **Webhook alerts** — Slack, Discord, PagerDuty for critical incidents
+- [ ] **PDF reports** — FINRA/EU AI Act as downloadable PDFs *(standby — Art. 12/17 postponed to Dec 2027)*
+- [x] **Webhook alerts** — Slack, Discord, PagerDuty, Telegram for critical incidents
 - [ ] **Custom policy UI** — write and test Rego rules directly in the dashboard
 - [ ] **TypeScript SDK parity** — `@audit` decorator + full feature parity with Python SDK
 
