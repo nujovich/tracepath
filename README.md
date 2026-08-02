@@ -287,7 +287,7 @@ One-click generation of regulatory reports, directly from the dashboard.
 The Digital Omnibus on AI (adopted 29 June 2026) postponed high-risk AI system obligations under Annex III:
 
 | Article | Obligation | Original | **Current** |
-|---|---|---|
+|---|---|---|---|
 | Art. 50 | Transparency (disclosure, deepfakes, AI-generated content) | 2 Aug 2026 | **2 Aug 2026** — in force |
 | Art. 12 | Record-Keeping (high-risk) | 2 Aug 2026 | **2 Dec 2027** |
 | Art. 17 | Quality Management System (high-risk) | 2 Aug 2026 | **2 Dec 2027** |
