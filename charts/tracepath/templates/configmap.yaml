@@ -28,6 +28,12 @@ data:
   {{- if .Values.incident.webhooks.discordUrl }}
   DISCORD_WEBHOOK_URL: {{ .Values.incident.webhooks.discordUrl | quote }}
   {{- end }}
+  {{- if .Values.incident.webhooks.telegramBotToken }}
+  TELEGRAM_BOT_TOKEN: {{ .Values.incident.webhooks.telegramBotToken | quote }}
+  {{- end }}
+  {{- if .Values.incident.webhooks.telegramChatId }}
+  TELEGRAM_CHAT_ID: {{ .Values.incident.webhooks.telegramChatId | quote }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Secret

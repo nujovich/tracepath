@@ -135,6 +135,8 @@ incident:
     discordUrl: ""
     pagerdutyRoutingKey: ""
     dashboardUrl: ""
+    telegramBotToken: ""
+    telegramChatId: ""
 
 # ── Policy API ──
 policies:

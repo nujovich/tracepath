@@ -20,6 +20,8 @@ SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 PAGERDUTY_ROUTING_KEY = os.environ.get("PAGERDUTY_ROUTING_KEY", "")
 INCIDENT_DASHBOARD_URL = os.environ.get("INCIDENT_DASHBOARD_URL", "http://localhost:3000/incidents")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 SEVERITY_COLORS = {
     "critical": "#DC2626",  # red
@@ -31,6 +33,9 @@ SEVERITY_EMOJI = {
     "critical": "🔴",
     "warning": "🟡",
     "info": "🔵",
+    "critical_telegram": "🚨",
+    "warning_telegram": "⚠️",
+    "info_telegram": "ℹ️",
 }
 
 
@@ -40,6 +45,7 @@ async def notify_all(incident: Incident) -> None:
         _notify_slack(incident) if SLACK_WEBHOOK_URL else None,
         _notify_discord(incident) if DISCORD_WEBHOOK_URL else None,
         _notify_pagerduty(incident) if PAGERDUTY_ROUTING_KEY else None,
+        _notify_telegram(incident) if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else None,
     )
     for r in results:
         if r and isinstance(r, Exception):
@@ -154,6 +160,43 @@ async def _notify_pagerduty(incident: Incident) -> None:
                 raise RuntimeError(f"PagerDuty returned {resp.status}: {body}")
             logger.info(
                 "pagerduty incident triggered: %s [%s]", incident.id, incident.severity
+            )
+
+
+async def _notify_telegram(incident: Incident) -> None:
+    """Send incident alert to Telegram chat via Bot API."""
+    emoji = SEVERITY_EMOJI.get(f"{incident.severity}_telegram", "⚪")
+    severity = incident.severity.upper()
+    incident_type = incident.incident_type.replace("_", " ").title()
+
+    text = (
+        f"{emoji} *[{severity}] {incident_type}*\n"
+        f"\n{incident.message}\n"
+        f"\n• Session: `{incident.session_id}`\n"
+        f"• Agent: `{incident.agent_id}`\n"
+        f"• Time: `{incident.detected_at}`"
+    )
+
+    if incident.context:
+        ctx = "\n".join(f"• {k}: `{v}`" for k, v in list(incident.context.items())[:5])
+        text += f"\n\n_Context:_\n{ctx}"
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+    }
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload) as resp:
+            if resp.status >= 400:
+                body = await resp.text()
+                raise RuntimeError(f"Telegram API returned {resp.status}: {body}")
+            logger.info(
+                "telegram notification sent: %s [%s]", incident.id, incident.severity
             )
 
 
