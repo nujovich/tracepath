@@ -101,6 +101,35 @@ Tracepath sits between your AI agent and the tools it calls. Every tool invocati
 
 ---
 
+## Instrumenting Your Agents
+
+Tracepath is framework-agnostic. Any agent can send audit events by POSTing to `/audit/step`. How you wire that depends on your agent framework:
+
+| Framework | Approach | Key concept |
+|---|---|---|
+| **Python (raw)** | `httpx.post(f"{gateway}/audit/step", json=payload)` | Call after each tool invocation |
+| **Python SDK** | `@audit` decorator or `AsyncAuditClient` | Automatic interception |
+| **Hermes Agent** | Plugin hook (`post_tool_call`) | Fire-and-forget observer |
+| **LangChain / LangGraph** | `BaseCallbackHandler` → `on_tool_end` | Native callback system |
+| **CrewAI / AutoGen** | Tool wrapper / decorator | Wrap tool's `_run()` with POST |
+| **Custom agent loop** | POST after each `tool_call()` | Inline in your agent loop |
+
+There is no automatic way to generate events — each agent framework needs its own integration point. The Tracepath SDKs provide the helpers; you provide the wiring for your stack.
+
+**Minimal example (any language):**
+
+```bash
+curl -X POST http://localhost:9001/audit/step \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"my-agent","agent_id":"researcher","agent_type":"assistant",
+       "step_number":1,"tool_name":"web_search",
+       "tool_input":{"query":"AI governance"},
+       "tool_output":{"results":5},
+       "timestamp":"2026-08-02T20:00:00Z"}'
+```
+
+---
+
 ## Architecture
 
 ![alt text](image-5.png)
