@@ -398,10 +398,12 @@ service:
 
 When unset, the gateway logs to stdout (JSON) with zero OTLP overhead.
 
-![Langfuse Cloud — Tracing tab with tracepath-gateway traces](screenshots/langfuse-tracing.png)
+<img width="2090" height="638" alt="image" src="https://github.com/user-attachments/assets/954a0983-7589-44a3-8fa3-d458713cb0f6" />
+
 *Langfuse Cloud showing traces exported from `tracepath-gateway`.*
 
-![Langfuse Cloud — Trace detail with service.name = tracepath-gateway](screenshots/langfuse-trace-detail.png)
+<img width="781" height="317" alt="image" src="https://github.com/user-attachments/assets/f2ab4502-a224-4f0c-9e8b-fe5fd440eeba" />
+
 *Trace detail view showing `scope_name: tracepath-gateway`.*
 
 ---
@@ -438,7 +440,7 @@ When unset, the gateway logs to stdout (JSON) with zero OTLP overhead.
 - [ ] **AWS Marketplace listing** — one-click deploy from AWS console
 - [ ] **Multi-tenant dashboard** — organization-level scoping and RBAC
 - [ ] **Replay engine end-to-end** — full historical replay with comparison reports
-- [ ] **LangFuse integration** — native OpenTelemetry export with pre-built dashboards
+- [x] **LangFuse integration** — native OpenTelemetry export with pre-built dashboards
 
 ### Vision (6+ months)
 
