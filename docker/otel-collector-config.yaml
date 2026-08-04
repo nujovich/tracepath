@@ -1,0 +1,22 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  otlphttp:
+    endpoint: "https://cloud.langfuse.com/api/public/otel"
+    headers:
+      Authorization: "Basic cGstbGYtODAwNjQxYmQtNzI1OC00NjcyLW5hMjctNGIyZDkwYWRmMGJlOnNrLWxmLTY3ODllZDI5LTJmZGItNGY4NC1hOTQ3LTkyYzg4MWM5Yzg4OA=="
+      x-langfuse-ingestion-version: "4"
+  logging:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp, logging]

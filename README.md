@@ -334,16 +334,75 @@ Each report validates:
 
 ## Observability
 
-The gateway exports traces to **LangFuse** via OTLP (HTTP). Disabled by default — enable with:
+The gateway exports traces to **Langfuse Cloud** via OpenTelemetry OTLP over HTTP, routed through an **OTEL Collector** container. Disabled by default — enable with the environment variables below.
+
+### Environment variables
 
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT="https://cloud.langfuse.com/api/public/otel"
-export OTEL_SERVICE_NAME="tracepath-gateway"
-export LANGFUSE_PUBLIC_KEY="pk-lf-..."
-export LANGFUSE_SECRET_KEY="sk-lf-..."
+# .env
+OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+OTEL_EXPORTER_OTLP_TRACES_HEADERS=""
+OTEL_SERVICE_NAME="tracepath-gateway"
+LANGFUSE_PUBLIC_KEY="pk-lf-..."
+LANGFUSE_SECRET_KEY="sk-lf-..."
 ```
 
+See `.env.example` for a starter template.
+
+### Docker Compose
+
+```yaml
+# docker/docker-compose.yml
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.102.0
+    command: ["--config=/etc/otelcol-config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-config.yaml:ro
+    depends_on:
+      - gateway
+    restart: unless-stopped
+```
+
+### OTEL Collector config
+
+```yaml
+# docker/otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  otlphttp:
+    endpoint: "https://cloud.langfuse.com/api/public/otel"
+    headers:
+      Authorization: "Basic <public_key>:<secret_key>"
+      x-langfuse-ingestion-version: "4"
+  logging:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp, logging]
+```
+
+### When unset
+
 When unset, the gateway logs to stdout (JSON) with zero OTLP overhead.
+
+![Langfuse Cloud — Tracing tab with tracepath-gateway traces](screenshots/langfuse-tracing.png)
+*Langfuse Cloud showing traces exported from `tracepath-gateway`.*
+
+![Langfuse Cloud — Trace detail with service.name = tracepath-gateway](screenshots/langfuse-trace-detail.png)
+*Trace detail view showing `scope_name: tracepath-gateway`.*
 
 ---
 

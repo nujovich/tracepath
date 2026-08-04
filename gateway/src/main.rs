@@ -32,6 +32,11 @@ struct AuditStep {
     tool_input: serde_json::Value,
     tool_output: serde_json::Value,
     timestamp: String,
+    /// Accumulated cost so far in this session, in USD cents.
+    /// Provider-agnostic: the caller (agent instrumentation) supplies it.
+    /// Defaults to 0 when omitted (serde default for Option<u32>).
+    #[serde(default)]
+    spent_so_far_cents: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,9 +92,7 @@ struct AppState {
 /// Initializes tracing subscriber with optional OTLP export to LangFuse.
 /// Returns a TracerProvider that must be kept alive — dropping it shuts down OTel.
 fn init_tracing() -> Option<TracerProvider> {
-    let otlp_enabled = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .or_else(|_| std::env::var("LANGFUSE_OTLP_ENDPOINT"))
-        .ok();
+    let otlp_enabled = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
 
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("tracepath_gateway=debug"));
@@ -101,18 +104,17 @@ fn init_tracing() -> Option<TracerProvider> {
             let service_name = std::env::var("OTEL_SERVICE_NAME")
                 .unwrap_or_else(|_| "tracepath-gateway".to_string());
 
-            // LangFuse auth: Basic <public_key:secret_key>
-            let public_key = std::env::var("LANGFUSE_PUBLIC_KEY").unwrap_or_default();
-            let secret_key = std::env::var("LANGFUSE_SECRET_KEY").unwrap_or_default();
-            let auth_header = format!(
-                "Basic {}",
-                BASE64.encode(format!("{}:{}", public_key, secret_key))
-            );
-
             let mut headers = HashMap::new();
-            headers.insert("Authorization".to_string(), auth_header);
+            if let Ok(raw) = std::env::var("OTEL_EXPORTER_OTLP_TRACES_HEADERS") {
+                for part in raw.split(',') {
+                    let mut seg = part.splitn(2, '=');
+                    if let (Some(k), Some(v)) = (seg.next(), seg.next()) {
+                        headers.insert(k.trim().to_string(), v.trim().to_string());
+                    }
+                }
+            }
 
-            let tracer_provider = opentelemetry_otlp::new_pipeline()
+            match opentelemetry_otlp::new_pipeline()
                 .tracing()
                 .with_exporter(
                     opentelemetry_otlp::new_exporter()
@@ -128,20 +130,31 @@ fn init_tracing() -> Option<TracerProvider> {
                     ),
                 )
                 .install_batch(opentelemetry_sdk::runtime::Tokio)
-                .expect("failed to initialize OpenTelemetry OTLP exporter");
+            {
+                Ok(tracer_provider) => {
+                    let tracer = tracer_provider.tracer("tracepath-gateway");
+                    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-            let tracer = tracer_provider.tracer("tracepath-gateway");
-            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+                    tracing_subscriber::registry()
+                        .with(env_filter)
+                        .with(fmt_layer)
+                        .with(otel_layer)
+                        .init();
 
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(fmt_layer)
-                .with(otel_layer)
-                .init();
+                    info!(%endpoint, %service_name, "OpenTelemetry OTLP export enabled → LangFuse");
 
-            info!(%endpoint, %service_name, "OpenTelemetry OTLP export enabled → LangFuse");
+                    Some(tracer_provider)
+                }
+                Err(err) => {
+                    tracing_subscriber::registry()
+                        .with(env_filter)
+                        .with(fmt_layer)
+                        .init();
 
-            Some(tracer_provider)
+                    warn!(?err, "OpenTelemetry OTLP exporter failed — continuing without LangFuse export");
+                    None
+                }
+            }
         }
         None => {
             tracing_subscriber::registry()
@@ -149,7 +162,7 @@ fn init_tracing() -> Option<TracerProvider> {
                 .with(fmt_layer)
                 .init();
 
-            info!("OpenTelemetry OTLP export disabled (set OTEL_EXPORTER_OTLP_ENDPOINT or LANGFUSE_OTLP_ENDPOINT to enable)");
+            info!("OpenTelemetry OTLP export disabled (set OTEL_EXPORTER_OTLP_ENDPOINT to enable)");
 
             None
         }
@@ -220,6 +233,12 @@ async fn evaluate_policy(engine: &PolicyEngine, input: &serde_json::Value) -> Po
 
     match result {
         Ok(val) => {
+            // Debug: log the raw OPA result shape
+            info!(
+                raw_result_type = %std::any::type_name_of_val(&val),
+                raw_result_preview = %format!("{:.200}", val),
+                "OPA evaluate result"
+            );
             let allowed = val[0]["result"]["allowed"].as_bool().unwrap_or(false);
             let denials: Vec<String> = val[0]["result"]["denials"]
                 .as_array()
@@ -327,13 +346,13 @@ async fn audit_step(
         "audit step received"
     );
 
-    // Build OPA input
+    // Build OPA input — spent_so_far_cents comes from the caller (provider-agnostic)
     let policy_input = serde_json::json!({
         "action": "audit_step",
         "agent_type": event.agent_type.as_deref().unwrap_or("default"),
         "tool_name": event.tool_name,
         "estimated_cost_cents": 0,
-        "spent_so_far_cents": 0,
+        "spent_so_far_cents": event.spent_so_far_cents.unwrap_or(0),
         "calls_last_minute": 0,
     });
 

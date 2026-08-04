@@ -5,8 +5,9 @@ services:
       dockerfile: docker/Dockerfile.gateway
     ports:
       - "9001:9001"
+    env_file:
+      - ../.env
     environment:
-      - AUDIT_SIGNING_KEY=${AUDIT_SIGNING_KEY}
       - GATEWAY_HOST=0.0.0.0
       - GATEWAY_PORT=9001
       - RUST_LOG=info
@@ -134,6 +135,18 @@ services:
       echo 'Bucket tracepath-worm ready';
       "
     restart: "no"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.102.0
+    command: ["--config=/etc/otelcol-config.yaml"]
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-config.yaml:ro
+    depends_on:
+      - gateway
+    restart: unless-stopped
 
 volumes:
   pgdata:
