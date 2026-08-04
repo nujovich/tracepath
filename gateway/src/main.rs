@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{event, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -346,30 +346,48 @@ async fn audit_step(
         "audit step received"
     );
 
-    // Build OPA input — spent_so_far_cents comes from the caller (provider-agnostic)
-    let policy_input = serde_json::json!({
-        "action": "audit_step",
-        "agent_type": event.agent_type.as_deref().unwrap_or("default"),
-        "tool_name": event.tool_name,
-        "estimated_cost_cents": 0,
-        "spent_so_far_cents": event.spent_so_far_cents.unwrap_or(0),
-        "calls_last_minute": 0,
-    });
-
-    let decision = evaluate_policy(&state.policy_engine, &policy_input).await;
-    let sig_b64 = sign_event(&state.signing_key, &event);
-
-    if !decision.allowed {
-        let denial_msgs = decision.denials.clone();
-        warn!(
+    // Critical path span: policy evaluation + signing.
+    let (decision, sig_b64) = {
+        let _inner = tracing::info_span!(
+            "audit_step",
             session_id = %event.session_id,
+            agent_id = %event.agent_id,
+            agent_type = %event.agent_type.as_deref().unwrap_or("default"),
+            step_number = event.step_number,
             tool_name = %event.tool_name,
-            ?denial_msgs,
-            "policy denied audit step"
-        );
-    }
+            policy.allowed = false,
+        )
+        .entered();
 
-    // Persist to PostgreSQL — always, even denied events are part of the audit trail
+        let policy_input = serde_json::json!({
+            "action": "audit_step",
+            "agent_type": event.agent_type.as_deref().unwrap_or("default"),
+            "tool_name": event.tool_name,
+            "estimated_cost_cents": 0,
+            "spent_so_far_cents": event.spent_so_far_cents.unwrap_or(0),
+            "calls_last_minute": 0,
+        });
+
+        let decision = evaluate_policy(&state.policy_engine, &policy_input).await;
+        tracing::Span::current().record("policy.allowed", decision.allowed);
+
+        let sig_b64 = sign_event(&state.signing_key, &event);
+
+        if !decision.allowed {
+            tracing::event!(
+                Level::WARN,
+                session_id = %event.session_id,
+                tool_name = %event.tool_name,
+                denial_msgs = ?decision.denials,
+                "policy denied audit step"
+            );
+        }
+
+        (decision, sig_b64)
+    };
+
+    // Persistence spans — off the critical path.
+    let _sql = tracing::info_span!("audit_step.persist").entered();
     let result = sqlx::query(
         "INSERT INTO audit_events (session_id, agent_id, agent_type, step_number, tool_name, tool_input, tool_output, signature, policy_decision)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
@@ -385,6 +403,7 @@ async fn audit_step(
     .bind(&serde_json::to_string(&decision).unwrap_or_default())
     .execute(&state.db_pool)
     .await;
+    drop(_sql);
 
     if let Err(e) = result {
         warn!(error = %e, "failed to persist audit event");
@@ -395,8 +414,9 @@ async fn audit_step(
         }));
     }
 
-    // Publish to NATS for real-time incident detection (all events, including denied)
+    let _nats = tracing::info_span!("audit_step.nats").entered();
     publish_audit_event(&state.nats, &event, &sig_b64, &decision).await;
+    drop(_nats);
 
     if !decision.allowed {
         return HttpResponse::Forbidden().json(AuditResponse {
@@ -406,7 +426,7 @@ async fn audit_step(
         });
     }
 
-    // Archive to WORM storage (MinIO S3 with Object Lock) — allowed events only
+    let _worm = tracing::info_span!("audit_step.worm").entered();
     if let Err(e) = worm_archive(
         &state.s3_client,
         &state.worm_bucket,
@@ -414,9 +434,12 @@ async fn audit_step(
         event.step_number,
         &sig_b64,
         &event,
-    ).await {
+    )
+    .await
+    {
         warn!(error = %e, "failed to archive to WORM storage (non-fatal)");
     }
+    drop(_worm);
 
     HttpResponse::Ok().json(AuditResponse {
         status: "recorded".to_string(),
