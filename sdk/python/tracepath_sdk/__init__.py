@@ -80,6 +80,13 @@ class AuditEventRow(BaseModel):
     tool_name: str
     signature: str
     policy_decision: Optional[str] = None
+    llm_model: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_prompt_tokens: Optional[int] = None
+    llm_completion_tokens: Optional[int] = None
+    llm_total_tokens: Optional[int] = None
+    llm_latency_ms: Optional[float] = None
+    llm_cost_cents: Optional[float] = None
     created_at: str
 
 
@@ -121,6 +128,13 @@ class AuditEvent:
             "%Y-%m-%dT%H:%M:%SZ"
         )
     )
+    llm_model: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_prompt_tokens: Optional[int] = None
+    llm_completion_tokens: Optional[int] = None
+    llm_total_tokens: Optional[int] = None
+    llm_latency_ms: Optional[float] = None
+    llm_cost_cents: Optional[float] = None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -193,7 +207,18 @@ class AsyncAuditClient:
         return r.json()
 
     async def record_step(
-        self, tool_name: str, tool_input: dict[str, Any], tool_output: dict[str, Any]
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_output: dict[str, Any],
+        *,
+        llm_model: str | None = None,
+        llm_provider: str | None = None,
+        llm_prompt_tokens: int | None = None,
+        llm_completion_tokens: int | None = None,
+        llm_total_tokens: int | None = None,
+        llm_latency_ms: float | None = None,
+        llm_cost_cents: float | None = None,
     ) -> AuditResponse:
         """Record a tool call and submit it to the gateway.
 
@@ -210,10 +235,20 @@ class AsyncAuditClient:
             tool_name=tool_name,
             tool_input=tool_input,
             tool_output=tool_output,
+            llm_model=llm_model,
+            llm_provider=llm_provider,
+            llm_prompt_tokens=llm_prompt_tokens,
+            llm_completion_tokens=llm_completion_tokens,
+            llm_total_tokens=llm_total_tokens,
+            llm_latency_ms=llm_latency_ms,
+            llm_cost_cents=llm_cost_cents,
         )
+        payload = {
+            key: value for key, value in asdict(event).items() if value is not None
+        }
         try:
             r = await self._client.post(
-                f"{self.gateway_url}/audit/step", json=asdict(event)
+                f"{self.gateway_url}/audit/step", json=payload
             )
             r.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -349,10 +384,32 @@ class SyncAuditClient:
         return self._run(self._async.health_policy())
 
     def record_step(
-        self, tool_name: str, tool_input: dict[str, Any], tool_output: dict[str, Any]
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_output: dict[str, Any],
+        *,
+        llm_model: str | None = None,
+        llm_provider: str | None = None,
+        llm_prompt_tokens: int | None = None,
+        llm_completion_tokens: int | None = None,
+        llm_total_tokens: int | None = None,
+        llm_latency_ms: float | None = None,
+        llm_cost_cents: float | None = None,
     ) -> AuditResponse:
         return self._run(
-            self._async.record_step(tool_name, tool_input, tool_output)
+            self._async.record_step(
+                tool_name,
+                tool_input,
+                tool_output,
+                llm_model=llm_model,
+                llm_provider=llm_provider,
+                llm_prompt_tokens=llm_prompt_tokens,
+                llm_completion_tokens=llm_completion_tokens,
+                llm_total_tokens=llm_total_tokens,
+                llm_latency_ms=llm_latency_ms,
+                llm_cost_cents=llm_cost_cents,
+            )
         )
 
     def query_events(

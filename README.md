@@ -193,6 +193,20 @@ async with client:
     # Manual audit
     resp = await client.record_step("terminal", {"cmd": "ls"}, {"exit": 0})
 
+    # LLM-backed calls can include vendor-neutral OTel metadata.
+    resp = await client.record_step(
+        "web_search",
+        {"q": "agent tracing"},
+        {"results": 3},
+        llm_model="gemini-2.5-flash",
+        llm_provider="google",
+        llm_prompt_tokens=120,
+        llm_completion_tokens=30,
+        llm_total_tokens=150,
+        llm_latency_ms=245.5,
+        llm_cost_cents=0.42,
+    )
+
     # Query the audit trail
     events = await client.query_events(session_id=client.session_id)
     print(f"{events.count} events recorded")

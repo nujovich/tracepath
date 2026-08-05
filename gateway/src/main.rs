@@ -37,6 +37,67 @@ struct AuditStep {
     /// Defaults to 0 when omitted (serde default for Option<u32>).
     #[serde(default)]
     spent_so_far_cents: Option<u32>,
+    /// Optional metadata for LLM-backed tool calls. These fields are flat to
+    /// keep the wire format easy to emit from framework callbacks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    llm_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    llm_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    llm_prompt_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    llm_completion_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    llm_total_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    llm_latency_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    llm_cost_cents: Option<f64>,
+}
+
+#[derive(Debug, PartialEq)]
+struct GenAiSpanAttributes<'a> {
+    system: Option<&'a str>,
+    model: Option<&'a str>,
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    latency_ms: Option<f64>,
+    cost_cents: Option<f64>,
+}
+
+impl<'a> From<&'a AuditStep> for GenAiSpanAttributes<'a> {
+    fn from(event: &'a AuditStep) -> Self {
+        Self {
+            system: event.llm_provider.as_deref(),
+            model: event.llm_model.as_deref(),
+            input_tokens: event.llm_prompt_tokens,
+            output_tokens: event.llm_completion_tokens,
+            latency_ms: event.llm_latency_ms,
+            cost_cents: event.llm_cost_cents,
+        }
+    }
+}
+
+fn record_gen_ai_attributes(span: &tracing::Span, event: &AuditStep) {
+    let attributes = GenAiSpanAttributes::from(event);
+    if let Some(value) = attributes.system {
+        span.record("gen_ai.system", value);
+    }
+    if let Some(value) = attributes.model {
+        span.record("gen_ai.request.model", value);
+    }
+    if let Some(value) = attributes.input_tokens {
+        span.record("gen_ai.usage.input_tokens", value);
+    }
+    if let Some(value) = attributes.output_tokens {
+        span.record("gen_ai.usage.output_tokens", value);
+    }
+    if let Some(value) = attributes.latency_ms {
+        span.record("gen_ai.latency", value);
+    }
+    if let Some(value) = attributes.cost_cents {
+        span.record("gen_ai.cost", value);
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -171,8 +232,8 @@ fn init_tracing() -> Option<TracerProvider> {
 
 // ── Ed25519 signing ──
 
-fn sign_event(key: &SigningKey, event: &AuditStep) -> String {
-    let canonical = serde_json::json!({
+fn canonical_event(event: &AuditStep) -> serde_json::Value {
+    let mut canonical = serde_json::json!({
         "session_id": event.session_id,
         "agent_id": event.agent_id,
         "step_number": event.step_number,
@@ -181,6 +242,30 @@ fn sign_event(key: &SigningKey, event: &AuditStep) -> String {
         "tool_output": event.tool_output,
         "timestamp": event.timestamp,
     });
+
+    let object = canonical
+        .as_object_mut()
+        .expect("canonical event is an object");
+    macro_rules! insert_optional {
+        ($name:literal, $value:expr) => {
+            if let Some(value) = $value {
+                object.insert($name.to_string(), serde_json::json!(value));
+            }
+        };
+    }
+    insert_optional!("llm_model", event.llm_model.as_deref());
+    insert_optional!("llm_provider", event.llm_provider.as_deref());
+    insert_optional!("llm_prompt_tokens", event.llm_prompt_tokens);
+    insert_optional!("llm_completion_tokens", event.llm_completion_tokens);
+    insert_optional!("llm_total_tokens", event.llm_total_tokens);
+    insert_optional!("llm_latency_ms", event.llm_latency_ms);
+    insert_optional!("llm_cost_cents", event.llm_cost_cents);
+
+    canonical
+}
+
+fn sign_event(key: &SigningKey, event: &AuditStep) -> String {
+    let canonical = canonical_event(event);
     let canonical_bytes = serde_json::to_vec(&canonical).expect("serialization failed");
     let signature = key.sign(&canonical_bytes);
     BASE64.encode(signature.to_bytes())
@@ -313,6 +398,13 @@ async fn publish_audit_event(
         "tool_name": event.tool_name,
         "tool_input": event.tool_input,
         "tool_output": event.tool_output,
+        "llm_model": event.llm_model,
+        "llm_provider": event.llm_provider,
+        "llm_prompt_tokens": event.llm_prompt_tokens,
+        "llm_completion_tokens": event.llm_completion_tokens,
+        "llm_total_tokens": event.llm_total_tokens,
+        "llm_latency_ms": event.llm_latency_ms,
+        "llm_cost_cents": event.llm_cost_cents,
         "timestamp": event.timestamp,
         "signature": signature,
         "policy_decision": {
@@ -348,7 +440,7 @@ async fn audit_step(
 
     // Critical path span: policy evaluation + signing.
     let (decision, sig_b64) = {
-        let _inner = tracing::info_span!(
+        let inner = tracing::info_span!(
             "audit_step",
             session_id = %event.session_id,
             agent_id = %event.agent_id,
@@ -356,8 +448,15 @@ async fn audit_step(
             step_number = event.step_number,
             tool_name = %event.tool_name,
             policy.allowed = false,
-        )
-        .entered();
+            gen_ai.system = tracing::field::Empty,
+            gen_ai.request.model = tracing::field::Empty,
+            gen_ai.usage.input_tokens = tracing::field::Empty,
+            gen_ai.usage.output_tokens = tracing::field::Empty,
+            gen_ai.latency = tracing::field::Empty,
+            gen_ai.cost = tracing::field::Empty,
+        );
+        record_gen_ai_attributes(&inner, &event);
+        let _inner = inner.entered();
 
         let policy_input = serde_json::json!({
             "action": "audit_step",
@@ -389,8 +488,9 @@ async fn audit_step(
     // Persistence spans — off the critical path.
     let _sql = tracing::info_span!("audit_step.persist").entered();
     let result = sqlx::query(
-        "INSERT INTO audit_events (session_id, agent_id, agent_type, step_number, tool_name, tool_input, tool_output, signature, policy_decision)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        "INSERT INTO audit_events (session_id, agent_id, agent_type, step_number, tool_name, tool_input, tool_output, signature, policy_decision,
+                                   llm_model, llm_provider, llm_prompt_tokens, llm_completion_tokens, llm_total_tokens, llm_latency_ms, llm_cost_cents)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
     )
     .bind(&event.session_id)
     .bind(&event.agent_id)
@@ -401,6 +501,13 @@ async fn audit_step(
     .bind(&event.tool_output)
     .bind(&sig_b64)
     .bind(&serde_json::to_string(&decision).unwrap_or_default())
+    .bind(&event.llm_model)
+    .bind(&event.llm_provider)
+    .bind(event.llm_prompt_tokens)
+    .bind(event.llm_completion_tokens)
+    .bind(event.llm_total_tokens)
+    .bind(event.llm_latency_ms)
+    .bind(event.llm_cost_cents)
     .execute(&state.db_pool)
     .await;
     drop(_sql);
@@ -456,7 +563,8 @@ async fn query_events(
     let offset = query.offset.unwrap_or(0);
 
     let mut sql = String::from(
-        "SELECT id, session_id, agent_id, agent_type, step_number, tool_name, signature, policy_decision, created_at
+        "SELECT id, session_id, agent_id, agent_type, step_number, tool_name, signature, policy_decision,
+                llm_model, llm_provider, llm_prompt_tokens, llm_completion_tokens, llm_total_tokens, llm_latency_ms, llm_cost_cents, created_at
          FROM audit_events WHERE 1=1"
     );
 
@@ -487,6 +595,13 @@ async fn query_events(
         tool_name: String,
         signature: String,
         policy_decision: Option<String>,
+        llm_model: Option<String>,
+        llm_provider: Option<String>,
+        llm_prompt_tokens: Option<i64>,
+        llm_completion_tokens: Option<i64>,
+        llm_total_tokens: Option<i64>,
+        llm_latency_ms: Option<f64>,
+        llm_cost_cents: Option<f64>,
         created_at: chrono::DateTime<chrono::Utc>,
     }
 
@@ -518,6 +633,13 @@ async fn query_events(
                     "tool_name": r.tool_name,
                     "signature": r.signature,
                     "policy_decision": r.policy_decision,
+                    "llm_model": r.llm_model,
+                    "llm_provider": r.llm_provider,
+                    "llm_prompt_tokens": r.llm_prompt_tokens,
+                    "llm_completion_tokens": r.llm_completion_tokens,
+                    "llm_total_tokens": r.llm_total_tokens,
+                    "llm_latency_ms": r.llm_latency_ms,
+                    "llm_cost_cents": r.llm_cost_cents,
                     "created_at": r.created_at.to_rfc3339(),
                 })
             }).collect();
@@ -806,4 +928,78 @@ async fn main() -> std::io::Result<()> {
     info!("gateway stopped");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event_json() -> serde_json::Value {
+        serde_json::json!({
+            "session_id": "session-1",
+            "agent_id": "agent-1",
+            "step_number": 1,
+            "tool_name": "search",
+            "tool_input": {"query": "otel"},
+            "tool_output": {"count": 2},
+            "timestamp": "2026-08-05T00:00:00Z"
+        })
+    }
+
+    #[test]
+    fn legacy_audit_step_payload_remains_valid() {
+        let event: AuditStep = serde_json::from_value(event_json()).unwrap();
+
+        assert_eq!(event.llm_model, None);
+        assert_eq!(event.llm_prompt_tokens, None);
+        assert_eq!(event.llm_cost_cents, None);
+        assert!(!canonical_event(&event)
+            .as_object()
+            .unwrap()
+            .contains_key("llm_model"));
+    }
+
+    #[test]
+    fn maps_llm_metadata_to_gen_ai_span_attributes() {
+        let mut payload = event_json();
+        let object = payload.as_object_mut().unwrap();
+        object.insert("llm_model".into(), "gemini-2.5-flash".into());
+        object.insert("llm_provider".into(), "google".into());
+        object.insert("llm_prompt_tokens".into(), 120.into());
+        object.insert("llm_completion_tokens".into(), 30.into());
+        object.insert("llm_total_tokens".into(), 150.into());
+        object.insert("llm_latency_ms".into(), 245.5.into());
+        object.insert("llm_cost_cents".into(), 0.42.into());
+
+        let event: AuditStep = serde_json::from_value(payload).unwrap();
+
+        assert_eq!(
+            GenAiSpanAttributes::from(&event),
+            GenAiSpanAttributes {
+                system: Some("google"),
+                model: Some("gemini-2.5-flash"),
+                input_tokens: Some(120),
+                output_tokens: Some(30),
+                latency_ms: Some(245.5),
+                cost_cents: Some(0.42),
+            }
+        );
+        assert_eq!(event.llm_total_tokens, Some(150));
+        assert_eq!(
+            canonical_event(&event)["llm_model"],
+            serde_json::json!("gemini-2.5-flash")
+        );
+    }
+
+    #[test]
+    fn omits_missing_llm_metadata_when_serializing() {
+        let event: AuditStep = serde_json::from_value(event_json()).unwrap();
+        let serialized = serde_json::to_value(event).unwrap();
+
+        assert!(!serialized.as_object().unwrap().contains_key("llm_model"));
+        assert!(!serialized
+            .as_object()
+            .unwrap()
+            .contains_key("llm_cost_cents"));
+    }
 }

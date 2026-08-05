@@ -52,6 +52,15 @@ public class AuditClient {
      */
     public AuditResponse recordStep(String toolName, Object toolInput, Object toolOutput)
             throws IOException, InterruptedException {
+        return recordStep(toolName, toolInput, toolOutput, null);
+    }
+
+    /**
+     * Record an audit step with optional LLM observability metadata.
+     */
+    public AuditResponse recordStep(
+            String toolName, Object toolInput, Object toolOutput, LlmMetadata llmMetadata)
+            throws IOException, InterruptedException {
         stepCounter++;
 
         AuditStep step = new AuditStep();
@@ -63,6 +72,15 @@ public class AuditClient {
         step.toolInput = toolInput;
         step.toolOutput = toolOutput;
         step.timestamp = Instant.now().toString();
+        if (llmMetadata != null) {
+            step.llmModel = llmMetadata.llmModel;
+            step.llmProvider = llmMetadata.llmProvider;
+            step.llmPromptTokens = llmMetadata.llmPromptTokens;
+            step.llmCompletionTokens = llmMetadata.llmCompletionTokens;
+            step.llmTotalTokens = llmMetadata.llmTotalTokens;
+            step.llmLatencyMs = llmMetadata.llmLatencyMs;
+            step.llmCostCents = llmMetadata.llmCostCents;
+        }
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/audit/step"))
@@ -115,7 +133,32 @@ public class AuditClient {
         @SerializedName("tool_name") String toolName;
         @SerializedName("tool_input") Object toolInput;
         @SerializedName("tool_output") Object toolOutput;
+        @SerializedName("llm_model") String llmModel;
+        @SerializedName("llm_provider") String llmProvider;
+        @SerializedName("llm_prompt_tokens") Long llmPromptTokens;
+        @SerializedName("llm_completion_tokens") Long llmCompletionTokens;
+        @SerializedName("llm_total_tokens") Long llmTotalTokens;
+        @SerializedName("llm_latency_ms") Double llmLatencyMs;
+        @SerializedName("llm_cost_cents") Double llmCostCents;
         String timestamp;
+    }
+
+    public static class LlmMetadata {
+        String llmModel;
+        String llmProvider;
+        Long llmPromptTokens;
+        Long llmCompletionTokens;
+        Long llmTotalTokens;
+        Double llmLatencyMs;
+        Double llmCostCents;
+
+        public LlmMetadata model(String value) { this.llmModel = value; return this; }
+        public LlmMetadata provider(String value) { this.llmProvider = value; return this; }
+        public LlmMetadata promptTokens(long value) { this.llmPromptTokens = value; return this; }
+        public LlmMetadata completionTokens(long value) { this.llmCompletionTokens = value; return this; }
+        public LlmMetadata totalTokens(long value) { this.llmTotalTokens = value; return this; }
+        public LlmMetadata latencyMs(double value) { this.llmLatencyMs = value; return this; }
+        public LlmMetadata costCents(double value) { this.llmCostCents = value; return this; }
     }
 
     public static class AuditResponse {
@@ -161,6 +204,13 @@ public class AuditClient {
         @SerializedName("tool_name") String toolName;
         String signature;
         @SerializedName("policy_decision") String policyDecision;
+        @SerializedName("llm_model") String llmModel;
+        @SerializedName("llm_provider") String llmProvider;
+        @SerializedName("llm_prompt_tokens") Long llmPromptTokens;
+        @SerializedName("llm_completion_tokens") Long llmCompletionTokens;
+        @SerializedName("llm_total_tokens") Long llmTotalTokens;
+        @SerializedName("llm_latency_ms") Double llmLatencyMs;
+        @SerializedName("llm_cost_cents") Double llmCostCents;
         @SerializedName("created_at") String createdAt;
     }
 }

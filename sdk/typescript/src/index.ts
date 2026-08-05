@@ -1,7 +1,17 @@
 // Tracepath TypeScript SDK — auditable AI agent middleware
 // Apache 2.0
 
-export interface AuditStep {
+export interface LlmMetadata {
+  llm_model?: string;
+  llm_provider?: string;
+  llm_prompt_tokens?: number;
+  llm_completion_tokens?: number;
+  llm_total_tokens?: number;
+  llm_latency_ms?: number;
+  llm_cost_cents?: number;
+}
+
+export interface AuditStep extends LlmMetadata {
   session_id: string;
   agent_id: string;
   agent_type?: string;
@@ -31,7 +41,7 @@ export interface QueryParams {
   offset?: number;
 }
 
-export interface AuditEvent {
+export interface AuditEvent extends LlmMetadata {
   id: string;
   session_id: string;
   agent_id: string;
@@ -73,10 +83,16 @@ export class AuditClient {
   /**
    * Record an audit step. Returns the signed response with policy decision.
    */
-  async recordStep(toolName: string, toolInput: unknown, toolOutput: unknown): Promise<AuditResponse> {
+  async recordStep(
+    toolName: string,
+    toolInput: unknown,
+    toolOutput: unknown,
+    llmMetadata: LlmMetadata = {},
+  ): Promise<AuditResponse> {
     this.stepCounter++;
 
     const body: AuditStep = {
+      ...llmMetadata,
       session_id: this.sessionId,
       agent_id: this.agentId,
       agent_type: this.agentType,

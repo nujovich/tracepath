@@ -13,6 +13,14 @@ CREATE TABLE IF NOT EXISTS audit_events (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS llm_model TEXT;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS llm_provider TEXT;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS llm_prompt_tokens BIGINT;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS llm_completion_tokens BIGINT;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS llm_total_tokens BIGINT;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS llm_latency_ms DOUBLE PRECISION;
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS llm_cost_cents DOUBLE PRECISION;
+
 CREATE INDEX IF NOT EXISTS idx_audit_events_session   ON audit_events (session_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_agent     ON audit_events (agent_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_created   ON audit_events (created_at);
