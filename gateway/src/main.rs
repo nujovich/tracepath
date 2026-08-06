@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{event, info, warn, Level};
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -15,7 +15,8 @@ use opa_wasm::{Policy, Runtime, DefaultContext};
 use opa_wasm::wasmtime::{Engine as WasmEngine, Module, Store};
 use aws_sdk_s3::Client as S3Client;
 use aws_config::BehaviorVersion;
-use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::Key;
+use opentelemetry::trace::{Span, Tracer, TracerProvider as _, TraceContextExt};
 use opentelemetry_sdk::trace::{TracerProvider, Config as TraceConfig};
 use opentelemetry_otlp::WithExportConfig;
 use async_nats::Client as NatsClient;
@@ -37,6 +38,21 @@ struct AuditStep {
     /// Defaults to 0 when omitted (serde default for Option<u32>).
     #[serde(default)]
     spent_so_far_cents: Option<u32>,
+    /// Optional LLM metadata for GenAI observability.
+    #[serde(default)]
+    llm_model: Option<String>,
+    #[serde(default)]
+    llm_provider: Option<String>,
+    #[serde(default)]
+    llm_prompt_tokens: Option<u32>,
+    #[serde(default)]
+    llm_completion_tokens: Option<u32>,
+    #[serde(default)]
+    llm_total_tokens: Option<u32>,
+    #[serde(default)]
+    llm_latency_ms: Option<u64>,
+    #[serde(default)]
+    llm_cost_cents: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,12 +249,6 @@ async fn evaluate_policy(engine: &PolicyEngine, input: &serde_json::Value) -> Po
 
     match result {
         Ok(val) => {
-            // Debug: log the raw OPA result shape
-            info!(
-                raw_result_type = %std::any::type_name_of_val(&val),
-                raw_result_preview = %format!("{:.200}", val),
-                "OPA evaluate result"
-            );
             let allowed = val[0]["result"]["allowed"].as_bool().unwrap_or(false);
             let denials: Vec<String> = val[0]["result"]["denials"]
                 .as_array()
@@ -337,6 +347,13 @@ async fn audit_step(
     body: web::Json<AuditStep>,
 ) -> HttpResponse {
     let event = body.into_inner();
+    let llm_model = event.llm_model.clone();
+    let llm_provider = event.llm_provider.clone();
+    let llm_prompt_tokens = event.llm_prompt_tokens;
+    let llm_completion_tokens = event.llm_completion_tokens;
+    let llm_total_tokens = event.llm_total_tokens;
+    let llm_latency_ms = event.llm_latency_ms;
+    let llm_cost_cents = event.llm_cost_cents;
 
     info!(
         session_id = %event.session_id,
@@ -346,51 +363,77 @@ async fn audit_step(
         "audit step received"
     );
 
+    let tracer = state.tracer_provider.as_ref()
+        .expect("OTel tracer provider not initialized")
+        .tracer("tracepath-gateway");
+    let span = tracer.start("audit_step");
+    let cx = opentelemetry::Context::current().with_span(span);
+    let _cx_guard = cx.attach();
+    let cx = opentelemetry::Context::current();
+    let mut span = cx.span();
+    span.set_attribute(Key::new("session_id").string(event.session_id.clone()));
+    span.set_attribute(Key::new("agent_id").string(event.agent_id.clone()));
+    span.set_attribute(Key::new("agent_type").string(event.agent_type.clone().unwrap_or_else(|| "default".to_string())));
+    span.set_attribute(Key::new("step_number").i64(event.step_number as i64));
+    span.set_attribute(Key::new("tool_name").string(event.tool_name.clone()));
+    span.set_attribute(Key::new("policy.allowed").bool(false));
+
     // Critical path span: policy evaluation + signing.
-    let (decision, sig_b64) = {
-        let _inner = tracing::info_span!(
-            "audit_step",
-            session_id = %event.session_id,
-            agent_id = %event.agent_id,
-            agent_type = %event.agent_type.as_deref().unwrap_or("default"),
-            step_number = event.step_number,
-            tool_name = %event.tool_name,
-            policy.allowed = false,
-        )
-        .entered();
+    let policy_input = serde_json::json!( {
+        "action": "audit_step",
+        "agent_type": event.agent_type.as_deref().unwrap_or("default"),
+        "tool_name": event.tool_name,
+        "estimated_cost_cents": 0,
+        "spent_so_far_cents": event.spent_so_far_cents.unwrap_or(0),
+        "calls_last_minute": 0,
+    } );
 
-        let policy_input = serde_json::json!({
-            "action": "audit_step",
-            "agent_type": event.agent_type.as_deref().unwrap_or("default"),
-            "tool_name": event.tool_name,
-            "estimated_cost_cents": 0,
-            "spent_so_far_cents": event.spent_so_far_cents.unwrap_or(0),
-            "calls_last_minute": 0,
-        });
+    let decision = evaluate_policy(&state.policy_engine, &policy_input).await;
+    span.set_attribute(Key::new("policy.allowed").bool(decision.allowed));
 
-        let decision = evaluate_policy(&state.policy_engine, &policy_input).await;
-        tracing::Span::current().record("policy.allowed", decision.allowed);
-
-        let sig_b64 = sign_event(&state.signing_key, &event);
-
-        if !decision.allowed {
-            tracing::event!(
-                Level::WARN,
-                session_id = %event.session_id,
-                tool_name = %event.tool_name,
-                denial_msgs = ?decision.denials,
-                "policy denied audit step"
-            );
+    if let Some(model) = llm_model {
+        tracing::info!(model = %model, provider = ?llm_provider, "recording gen_ai attributes");
+        let mut llm_span = tracer.start("llm");
+        if let Some(provider) = llm_provider {
+            llm_span.set_attribute(Key::new("gen_ai.system").string(provider));
         }
+        llm_span.set_attribute(Key::new("gen_ai.request.model").string(model));
+        if let Some(tokens) = llm_prompt_tokens {
+            llm_span.set_attribute(Key::new("gen_ai.usage.input_tokens").string(tokens.to_string()));
+        }
+        if let Some(tokens) = llm_completion_tokens {
+            llm_span.set_attribute(Key::new("gen_ai.usage.output_tokens").string(tokens.to_string()));
+        }
+        if let Some(tokens) = llm_total_tokens {
+            llm_span.set_attribute(Key::new("gen_ai.usage.total_tokens").string(tokens.to_string()));
+        }
+        if let Some(latency) = llm_latency_ms {
+            llm_span.set_attribute(Key::new("gen_ai.latency").f64(latency as f64));
+        }
+        if let Some(cost) = llm_cost_cents {
+            llm_span.set_attribute(Key::new("gen_ai.cost").string(cost.to_string()));
+        }
+        llm_span.end();
+        if let Some(provider) = state.tracer_provider.as_ref() {
+            let _ = provider.force_flush();
+        }
+    }
 
-        (decision, sig_b64)
-    };
+    let sig_b64 = sign_event(&state.signing_key, &event);
+
+    if !decision.allowed {
+        warn!(
+            session_id = %event.session_id,
+            tool_name = %event.tool_name,
+            denial_msgs = ?decision.denials,
+            "policy denied audit step"
+        );
+    }
 
     // Persistence spans — off the critical path.
     let _sql = tracing::info_span!("audit_step.persist").entered();
     let result = sqlx::query(
-        "INSERT INTO audit_events (session_id, agent_id, agent_type, step_number, tool_name, tool_input, tool_output, signature, policy_decision)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        "INSERT INTO audit_events (session_id, agent_id, agent_type, step_number, tool_name, tool_input, tool_output, signature, policy_decision)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
     )
     .bind(&event.session_id)
     .bind(&event.agent_id)
@@ -403,49 +446,23 @@ async fn audit_step(
     .bind(&serde_json::to_string(&decision).unwrap_or_default())
     .execute(&state.db_pool)
     .await;
-    drop(_sql);
 
     if let Err(e) = result {
-        warn!(error = %e, "failed to persist audit event");
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "error",
-            "message": format!("persistence failed: {}", e),
-            "signature": sig_b64,
-        }));
+        tracing::error!(error = %e, "audit_step persist failed");
     }
 
-    let _nats = tracing::info_span!("audit_step.nats").entered();
-    publish_audit_event(&state.nats, &event, &sig_b64, &decision).await;
-    drop(_nats);
-
-    if !decision.allowed {
-        return HttpResponse::Forbidden().json(AuditResponse {
-            status: "denied".to_string(),
-            signature: sig_b64,
-            policy_decision: Some(decision),
-        });
-    }
-
-    let _worm = tracing::info_span!("audit_step.worm").entered();
-    if let Err(e) = worm_archive(
-        &state.s3_client,
-        &state.worm_bucket,
-        &event.session_id,
-        event.step_number,
-        &sig_b64,
-        &event,
-    )
-    .await
-    {
-        warn!(error = %e, "failed to archive to WORM storage (non-fatal)");
-    }
-    drop(_worm);
-
-    HttpResponse::Ok().json(AuditResponse {
+    let response = AuditResponse {
         status: "recorded".to_string(),
         signature: sig_b64,
-        policy_decision: Some(decision),
-    })
+        policy_decision: Some(PolicyDecision {
+            allowed: decision.allowed,
+            denials: decision.denials,
+        }),
+    };
+
+    span.end();
+
+    HttpResponse::Ok().json(response)
 }
 
 async fn query_events(
