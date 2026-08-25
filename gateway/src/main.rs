@@ -6,19 +6,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use opa_wasm::{Policy, Runtime, DefaultContext};
 use opa_wasm::wasmtime::{Engine as WasmEngine, Module, Store};
-use aws_sdk_s3::Client as S3Client;
 use aws_config::BehaviorVersion;
-use opentelemetry::Key;
-use opentelemetry::trace::{Span, Tracer, TracerProvider as _, TraceContextExt};
-use opentelemetry_sdk::trace::{TracerProvider, Config as TraceConfig};
-use opentelemetry_otlp::WithExportConfig;
+use aws_sdk_s3::Client as S3Client;
 use async_nats::Client as NatsClient;
 
 // ── Data models ──
@@ -53,6 +46,9 @@ struct AuditStep {
     llm_latency_ms: Option<u64>,
     #[serde(default)]
     llm_cost_cents: Option<u32>,
+    /// Parent tool step number for LLM generation correlation.
+    #[serde(default)]
+    llm_parent_step: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,6 +69,42 @@ struct HealthResponse {
     status: String,
     service: String,
     version: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OtelDebugResponse {
+    otlp_enabled: bool,
+    endpoint: String,
+    headers_present: bool,
+    service_name: String,
+}
+
+impl Default for OtelDebugResponse {
+    fn default() -> Self {
+        Self {
+            otlp_enabled: false,
+            endpoint: String::new(),
+            headers_present: false,
+            service_name: String::new(),
+        }
+    }
+}
+
+fn get_otel_debug() -> OtelDebugResponse {
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap_or_default();
+    let headers_present = std::env::var("OTEL_EXPORTER_OTLP_TRACES_HEADERS").is_ok();
+    let service_name = std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "tracepath-gateway".to_string());
+
+    OtelDebugResponse {
+        otlp_enabled: !endpoint.is_empty(),
+        endpoint,
+        headers_present,
+        service_name,
+    }
+}
+
+async fn otel_debug() -> HttpResponse {
+    HttpResponse::Ok().json(serde_json::json!(get_otel_debug()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,90 +131,7 @@ struct AppState {
     db_pool: sqlx::PgPool,
     s3_client: S3Client,
     worm_bucket: String,
-    tracer_provider: Option<TracerProvider>,
     nats: Option<NatsClient>,
-}
-
-// ── Tracing + OpenTelemetry ──
-
-/// Initializes tracing subscriber with optional OTLP export to LangFuse.
-/// Returns a TracerProvider that must be kept alive — dropping it shuts down OTel.
-fn init_tracing() -> Option<TracerProvider> {
-    let otlp_enabled = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
-
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("tracepath_gateway=debug"));
-
-    let fmt_layer = tracing_subscriber::fmt::layer().json();
-
-    match otlp_enabled {
-        Some(endpoint) => {
-            let service_name = std::env::var("OTEL_SERVICE_NAME")
-                .unwrap_or_else(|_| "tracepath-gateway".to_string());
-
-            let mut headers = HashMap::new();
-            if let Ok(raw) = std::env::var("OTEL_EXPORTER_OTLP_TRACES_HEADERS") {
-                for part in raw.split(',') {
-                    let mut seg = part.splitn(2, '=');
-                    if let (Some(k), Some(v)) = (seg.next(), seg.next()) {
-                        headers.insert(k.trim().to_string(), v.trim().to_string());
-                    }
-                }
-            }
-
-            match opentelemetry_otlp::new_pipeline()
-                .tracing()
-                .with_exporter(
-                    opentelemetry_otlp::new_exporter()
-                        .http()
-                        .with_endpoint(&endpoint)
-                        .with_headers(headers),
-                )
-                .with_trace_config(
-                    TraceConfig::default().with_resource(
-                        opentelemetry_sdk::Resource::new(vec![
-                            opentelemetry::KeyValue::new("service.name", service_name.clone()),
-                        ]),
-                    ),
-                )
-                .install_batch(opentelemetry_sdk::runtime::Tokio)
-            {
-                Ok(tracer_provider) => {
-                    let tracer = tracer_provider.tracer("tracepath-gateway");
-                    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-
-                    tracing_subscriber::registry()
-                        .with(env_filter)
-                        .with(fmt_layer)
-                        .with(otel_layer)
-                        .init();
-
-                    info!(%endpoint, %service_name, "OpenTelemetry OTLP export enabled → LangFuse");
-
-                    Some(tracer_provider)
-                }
-                Err(err) => {
-                    tracing_subscriber::registry()
-                        .with(env_filter)
-                        .with(fmt_layer)
-                        .init();
-
-                    warn!(?err, "OpenTelemetry OTLP exporter failed — continuing without LangFuse export");
-                    None
-                }
-            }
-        }
-        None => {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(fmt_layer)
-                .init();
-
-            info!("OpenTelemetry OTLP export disabled (set OTEL_EXPORTER_OTLP_ENDPOINT to enable)");
-
-            None
-        }
-    }
 }
 
 // ── Ed25519 signing ──
@@ -342,6 +291,179 @@ async fn publish_audit_event(
 
 // ── Handlers ──
 
+/// Send an LLM span to LangFuse via OTLP HTTP when LLM metadata is present.
+async fn publish_llm_span(
+    llm_model: &Option<String>,
+    llm_provider: &Option<String>,
+    llm_prompt_tokens: Option<u32>,
+    llm_completion_tokens: Option<u32>,
+    llm_total_tokens: Option<u32>,
+    llm_latency_ms: Option<u64>,
+    llm_cost_cents: Option<u32>,
+    llm_parent_step: Option<u32>,
+    session_id: &str,
+    agent_id: &str,
+    agent_type: &Option<String>,
+    step_number: u32,
+    timestamp: &str,
+    tool_name: &str,
+) {
+    let pk = std::env::var("LANGFUSE_PUBLIC_KEY");
+    let sk = std::env::var("LANGFUSE_SECRET_KEY");
+
+    let (Some(pk), Some(sk)) = (pk.ok(), sk.ok()) else {
+        return;
+    };
+
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", pk, sk));
+    let hash = md5::compute(session_id);
+    let trace_id_hex = hex::encode(hash.0);
+    let hash2 = md5::compute(format!("{}-{}", session_id, step_number));
+    let span_id_hex = hex::encode(&hash2.0[..8]);
+    let parent_span_id_hex = llm_parent_step.map(|parent_step| {
+        let ph = md5::compute(format!("{}-{}", session_id, parent_step));
+        hex::encode(&ph.0[..8])
+    });
+
+    let parse_ts = chrono::DateTime::parse_from_rfc3339(timestamp);
+    let start_dt = parse_ts.unwrap_or_else(|_| chrono::Utc::now().into());
+    let now_ns = start_dt.timestamp_nanos() as u64;
+    let end_ns = now_ns + u64::from(llm_latency_ms.unwrap_or(0).max(1)) * 1_000_000;
+
+    let mut attrs: Vec<serde_json::Value> = vec![
+        serde_json::json!({"key": "env", "value": {"stringValue": "dev"}}),
+        serde_json::json!({"key": "session_id", "value": {"stringValue": session_id}}),
+        serde_json::json!({"key": "agent_id", "value": {"stringValue": agent_id}}),
+        serde_json::json!({"key": "tool_name", "value": {"stringValue": tool_name}}),
+        serde_json::json!({"key": "step_number", "value": {"intValue": step_number}}),
+        // LangFuse GenAI semantic conventions — span with model attr => Generation
+        serde_json::json!({"key": "model", "value": {"stringValue": llm_model.clone().unwrap_or_default()}}),
+        serde_json::json!({"key": "gen_ai.request.model", "value": {"stringValue": llm_model.clone().unwrap_or_default()}}),
+    ];
+    if let Some(ref prov) = llm_provider {
+        attrs.push(serde_json::json!({"key": "gen_ai.provider.name", "value": {"stringValue": prov}}));
+    }
+    if let Some(pt) = llm_prompt_tokens {
+        attrs.push(serde_json::json!({"key": "gen_ai.usage.input_tokens", "value": {"intValue": pt}}));
+    }
+    if let Some(ct) = llm_completion_tokens {
+        attrs.push(serde_json::json!({"key": "gen_ai.usage.output_tokens", "value": {"intValue": ct}}));
+    }
+    if let Some(tt) = llm_total_tokens {
+        attrs.push(serde_json::json!({"key": "gen_ai.usage.total_tokens", "value": {"intValue": tt}}));
+    }
+    if let Some(lat) = llm_latency_ms {
+        attrs.push(serde_json::json!({"key": "gen_ai.latency_ms", "value": {"intValue": lat}}));
+    }
+    if let Some(c) = llm_cost_cents {
+        attrs.push(serde_json::json!({"key": "gen_ai.usage.cost", "value": {"intValue": c}}));
+    }
+
+    let mut span_obj: serde_json::Value = serde_json::json!({
+        "traceId": trace_id_hex,
+        "spanId": span_id_hex,
+        "name": "llm",
+        "kind": 1,
+        "startTimeUnixNano": now_ns.to_string(),
+        "endTimeUnixNano": end_ns.to_string(),
+        "attributes": attrs,
+    });
+    if let Some(ref parent_id) = parent_span_id_hex {
+        span_obj["parentSpanId"] = serde_json::json!(parent_id);
+    }
+
+    let body = serde_json::json!({
+        "resourceSpans": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "tracepath-gateway"}},
+                        {"key": "agent.id", "value": {"stringValue": agent_id}},
+                        {"key": "environment", "value": {"stringValue": "dev"}},
+                    ]
+                },
+                "scopeSpans": [
+                    {
+                        "scope": {"name": "tracepath-gateway"},
+                        "spans": [span_obj]
+                    }
+                ]
+            }
+        ]
+    });
+
+    let client = awc::Client::new();
+    let collector_url = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://otel-collector:4318".to_string());
+    let lf_url = format!("{}/v1/traces", collector_url.trim_end_matches('/'));
+    match client
+        .post(&lf_url)
+        .append_header(("Content-Type", "application/json"))
+        .send_json(&body)
+        .await
+    {
+        Ok(_resp) => {
+            info!(trace_id = %trace_id_hex, "span sent to LangFuse");
+        }
+        Err(e) => {
+            warn!(error = %e, "failed to send span to LangFuse");
+        }
+    }
+}
+
+/// Send a generic span (policy eval, signing, persistence, etc.) to OTLP collector.
+async fn publish_span(
+    trace_id_hex: &str,
+    span_id_hex: &str,
+    parent_span_id: Option<&str>,
+    name: &str,
+    duration_ms: u64,
+    attrs: Vec<serde_json::Value>,
+) {
+    let start_dt = chrono::Utc::now();
+    let now_ns = start_dt.timestamp_nanos() as u64;
+    let end_ns = now_ns + duration_ms * 1_000_000;
+
+    let mut span_obj: serde_json::Value = serde_json::json!({
+        "traceId": trace_id_hex,
+        "spanId": span_id_hex,
+        "name": name,
+        "kind": 1,
+        "startTimeUnixNano": now_ns.to_string(),
+        "endTimeUnixNano": end_ns.to_string(),
+        "attributes": attrs,
+    });
+    if let Some(parent_id) = parent_span_id {
+        span_obj["parentSpanId"] = serde_json::json!(parent_id);
+    }
+
+    let body = serde_json::json!({
+        "resourceSpans": [{
+            "resource": {
+                "attributes": [
+                    {"key": "service.name", "value": {"stringValue": "tracepath-gateway"}},
+                    {"key": "environment", "value": {"stringValue": "dev"}},
+                ]
+            },
+            "scopeSpans": [{
+                "scope": {"name": "tracepath-gateway"},
+                "spans": [span_obj]
+            }]
+        }]
+    });
+
+    let client = awc::Client::new();
+    let collector_url = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://otel-collector:4318".to_string());
+    let lf_url = format!("{}/v1/traces", collector_url.trim_end_matches('/'));
+    let _ = client.post(&lf_url)
+        .append_header(("Content-Type", "application/json"))
+        .send_json(&body)
+        .await
+        .map(|_| info!(trace_id = %trace_id_hex, name, "span sent"))
+        .map_err(|e| warn!(error = %e, name, "failed to send span"));
+}
+
 async fn audit_step(
     state: web::Data<Arc<AppState>>,
     body: web::Json<AuditStep>,
@@ -354,6 +476,7 @@ async fn audit_step(
     let llm_total_tokens = event.llm_total_tokens;
     let llm_latency_ms = event.llm_latency_ms;
     let llm_cost_cents = event.llm_cost_cents;
+    let llm_parent_step = event.llm_parent_step;
 
     info!(
         session_id = %event.session_id,
@@ -363,63 +486,43 @@ async fn audit_step(
         "audit step received"
     );
 
-    let tracer = state.tracer_provider.as_ref()
-        .expect("OTel tracer provider not initialized")
-        .tracer("tracepath-gateway");
-    let span = tracer.start("audit_step");
-    let cx = opentelemetry::Context::current().with_span(span);
-    let _cx_guard = cx.attach();
-    let cx = opentelemetry::Context::current();
-    let mut span = cx.span();
-    span.set_attribute(Key::new("session_id").string(event.session_id.clone()));
-    span.set_attribute(Key::new("agent_id").string(event.agent_id.clone()));
-    span.set_attribute(Key::new("agent_type").string(event.agent_type.clone().unwrap_or_else(|| "default".to_string())));
-    span.set_attribute(Key::new("step_number").i64(event.step_number as i64));
-    span.set_attribute(Key::new("tool_name").string(event.tool_name.clone()));
-    span.set_attribute(Key::new("policy.allowed").bool(false));
-
-    // Critical path span: policy evaluation + signing.
+    // Critical path: policy evaluation + signing.
     let policy_input = serde_json::json!( {
         "action": "audit_step",
         "agent_type": event.agent_type.as_deref().unwrap_or("default"),
-        "tool_name": event.tool_name,
+        "tool_name": event.tool_name.as_str(),
         "estimated_cost_cents": 0,
         "spent_so_far_cents": event.spent_so_far_cents.unwrap_or(0),
         "calls_last_minute": 0,
     } );
 
     let decision = evaluate_policy(&state.policy_engine, &policy_input).await;
-    span.set_attribute(Key::new("policy.allowed").bool(decision.allowed));
-
-    if let Some(model) = llm_model {
-        tracing::info!(model = %model, provider = ?llm_provider, "recording gen_ai attributes");
-        let mut llm_span = tracer.start("llm");
-        if let Some(provider) = llm_provider {
-            llm_span.set_attribute(Key::new("gen_ai.system").string(provider));
-        }
-        llm_span.set_attribute(Key::new("gen_ai.request.model").string(model));
-        if let Some(tokens) = llm_prompt_tokens {
-            llm_span.set_attribute(Key::new("gen_ai.usage.input_tokens").string(tokens.to_string()));
-        }
-        if let Some(tokens) = llm_completion_tokens {
-            llm_span.set_attribute(Key::new("gen_ai.usage.output_tokens").string(tokens.to_string()));
-        }
-        if let Some(tokens) = llm_total_tokens {
-            llm_span.set_attribute(Key::new("gen_ai.usage.total_tokens").string(tokens.to_string()));
-        }
-        if let Some(latency) = llm_latency_ms {
-            llm_span.set_attribute(Key::new("gen_ai.latency").f64(latency as f64));
-        }
-        if let Some(cost) = llm_cost_cents {
-            llm_span.set_attribute(Key::new("gen_ai.cost").string(cost.to_string()));
-        }
-        llm_span.end();
-        if let Some(provider) = state.tracer_provider.as_ref() {
-            let _ = provider.force_flush();
-        }
-    }
 
     let sig_b64 = sign_event(&state.signing_key, &event);
+
+    // Emit OTLP spans for audit step phases (policy eval, signing)
+    let session_id_str = event.session_id.clone();
+    let trace_id_hex = hex::encode(md5::compute(&session_id_str).0);
+    let tool_span_id = hex::encode(&md5::compute(format!("{}-{}", session_id_str, event.step_number)).0[..8]);
+    let sign_span_id = hex::encode(&md5::compute(format!("{}-sign", session_id_str)).0[..8]);
+    let step_attrs: Vec<serde_json::Value> = vec![
+        serde_json::json!({"key": "session_id", "value": {"stringValue": &session_id_str}}),
+        serde_json::json!({"key": "agent_id", "value": {"stringValue": &event.agent_id}}),
+        serde_json::json!({"key": "tool_name", "value": {"stringValue": &event.tool_name}}),
+        serde_json::json!({"key": "step_number", "value": {"intValue": event.step_number.to_string()}}),
+    ];
+    let _ = publish_span(&trace_id_hex, &tool_span_id, None, "evaluate_policy", 1, step_attrs.clone()).await;
+    let _ = publish_span(&trace_id_hex, &sign_span_id, Some(&tool_span_id), "sign_event", 1, step_attrs.clone()).await;
+
+    // Send LLM span to LangFuse via OTLP when LLM metadata is present
+    if llm_model.is_some() {
+        publish_llm_span(
+            &llm_model, &llm_provider, llm_prompt_tokens, llm_completion_tokens,
+            llm_total_tokens, llm_latency_ms, llm_cost_cents, llm_parent_step,
+            &event.session_id, &event.agent_id, &event.agent_type,
+            event.step_number, &event.timestamp, &event.tool_name,
+        ).await;
+    }
 
     if !decision.allowed {
         warn!(
@@ -430,8 +533,7 @@ async fn audit_step(
         );
     }
 
-    // Persistence spans — off the critical path.
-    let _sql = tracing::info_span!("audit_step.persist").entered();
+    // Persistence — off the critical path.
     let result = sqlx::query(
         "INSERT INTO audit_events (session_id, agent_id, agent_type, step_number, tool_name, tool_input, tool_output, signature, policy_decision)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
     )
@@ -447,6 +549,8 @@ async fn audit_step(
     .execute(&state.db_pool)
     .await;
 
+    let db_span_id = hex::encode(&md5::compute(format!("{}-db", event.session_id)).0[..8]);
+    let _ = publish_span(&trace_id_hex, &db_span_id, Some(&tool_span_id), "db_persist", 1, step_attrs.clone()).await;
     if let Err(e) = result {
         tracing::error!(error = %e, "audit_step persist failed");
     }
@@ -460,7 +564,7 @@ async fn audit_step(
         }),
     };
 
-    span.end();
+
 
     HttpResponse::Ok().json(response)
 }
@@ -711,7 +815,13 @@ async fn policy_health(state: web::Data<Arc<AppState>>) -> HttpResponse {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
-    let tracer_provider = init_tracing();
+
+    // Initialize tracing subscriber for logs
+    use tracing_subscriber::{fmt, prelude::*};
+    let _ = tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("tracepath_gateway=info")))
+        .try_init();
 
     // Signing key
     let signing_key_hex = std::env::var("AUDIT_SIGNING_KEY")
@@ -778,7 +888,6 @@ async fn main() -> std::io::Result<()> {
         db_pool,
         s3_client,
         worm_bucket,
-        tracer_provider,
         nats,
     });
 
@@ -805,16 +914,14 @@ async fn main() -> std::io::Result<()> {
             .route("/reports/{tail:.*}", web::get().to(proxy_reports))
             .route("/gemini", web::get().to(proxy_gemini))
             .route("/policies/{tail:.*}", web::route().to(proxy_policies))
+            .route("/debug/otel", web::get().to(otel_debug))
     })
     .bind(format!("{}:{}", host, port))?
     .run()
     .await?;
 
     // Graceful shutdown: flush and drop OTel tracer provider
-    if let Some(ref tp) = state_for_shutdown.tracer_provider {
-        info!("shutting down OpenTelemetry tracer provider");
-        tp.shutdown().expect("failed to shutdown tracer provider");
-    }
+
     // Drain NATS connection
     if let Some(ref nats) = state_for_shutdown.nats {
         info!("draining NATS connection");
